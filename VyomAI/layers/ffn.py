@@ -10,11 +10,11 @@ class SelfOutput(nn.Module):
         self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.layerNorm(hidden_states + input_tensor)
-        return hidden_states
+    def forward(self, hidden_state: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+        hidden_state = self.dense(hidden_state)
+        hidden_state = self.dropout(hidden_state)
+        hidden_state = self.layerNorm(hidden_state + input_tensor)
+        return hidden_state
     
 _ACT_ = {
     "gelu": nn.GELU(),
@@ -36,12 +36,12 @@ class FeedForward(nn.Module):
         else:
              self.act_fn = nn.GELU()
         self.out = nn.Linear(int(multiplier)*config.hidden_size,config.hidden_size)
-    def forward(self,hidden_state: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_state: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
          output = self.intermediate(hidden_state)
          output = self.act_fn(output)
          output = self.out(output)
          output = self.dropout(output)
-         output = self.layerNorm(output+hidden_state)
+         output = self.layerNorm(output+input_tensor)
          return output
 
           
