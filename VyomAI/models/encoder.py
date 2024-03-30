@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 from typing import Optional,Tuple
-from layers.attention import EncoderAttention
-from layers.positional_embeddings import AbsoluteEncoding,SinusoidalEncoding,RelativePositionalEncoding
-from layers.ffn import FeedForward
+from ..layers.attention import EncoderAttention
+from ..layers.positional_embeddings import AbsoluteEncoding,SinusoidalEncoding,RelativePositionalEncoding
+from ..layers.ffn import FeedForward
 from dataclasses import dataclass
 
 _position_embeddings = {'absolute':AbsoluteEncoding,
                         'sinusoidal':SinusoidalEncoding,
-                        'relative':RelativePositionalEncoding}
+                        } #'relative':RelativePositionalEncoding
 
 @dataclass
 class EncoderOutput(object):
@@ -50,7 +50,7 @@ class Embeddings(nn.Module):
 class LMHead(nn.Module):
     '''Head for masked language modelling'''
     def __init__(self, config) -> None:
-        super().__init__(config)
+        super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
@@ -73,13 +73,16 @@ class LMHead(nn.Module):
 class EncoderModel(nn.Module):
     def __init__(self,config) -> None:
         super().__init__()
-        self.embeddings = Embeddings(config)
+        self.embeddings = Embeddings(config,pos_embedding=config.position_embedding_type)
         self.all_layer = nn.ModuleList([EncoderLayer(config) 
-                                     for _ in range(self.n_layers)])
+                                     for _ in range(config.num_hidden_layers)])
         
     def forward(self,input_ids: torch.Tensor,attention_mask: torch.Tensor) -> torch.Tensor:
         hidden_state = self.embeddings(input_ids=input_ids)
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        #SDPA requires attn_mask dtype to be bool or to match query dtype
+        attention_mask = attention_mask.bool()
+
         for layer in self.all_layer:
             hidden_state = layer(hidden_state,attention_mask)
         return EncoderOutput(hidden_state)

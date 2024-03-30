@@ -2,20 +2,20 @@ import torch
 import torch.nn as nn
 from einops import rearrange, reduce
 from typing import Optional,Tuple
-from ffn import SelfOutput
+from .ffn import SelfOutput
 
 
     
 class EncoderAttention(nn.Module):
     def __init__(self,config) -> None:
-        super.__init__()
+        super().__init__()
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
             )
-        self.head_size = int(config.hidden_size/config.num_attention_heads)
-        self.qkv = nn.Linear(self.hidden_size,3*self.hidden_size)
+        self.head_size = int(config.hidden_size//config.num_attention_heads)
+        self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
         self.output = SelfOutput(config=config)
         self.num_attention_heads = config.num_attention_heads
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
