@@ -1,6 +1,6 @@
 #for model making utils
 import torch.nn as nn
-
+from typing import Dict
 
 def model_size(model: nn.Module) -> float:
     param_size = 0
@@ -13,7 +13,7 @@ def model_size(model: nn.Module) -> float:
     size_all_mb = (param_size + buffer_size) / 1024**2
     return size_all_mb
 
-def init_weights(module) -> None:
+def init_weights(module: nn.Module) -> None:
     """Initialize the weights"""
     if isinstance(module, nn.Linear):
         #copied from Transformer
@@ -27,3 +27,8 @@ def init_weights(module) -> None:
     elif isinstance(module, nn.LayerNorm):
         module.bias.data.zero_()
         module.weight.data.fill_(1.0)
+
+def model_parameters(model: nn.Module) -> Dict[str,int]:
+    total_params = sum([p.numel() for p in model.parameters()])
+    trainable_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
+    return {'total_params':total_params,'trainable_params':trainable_params}
