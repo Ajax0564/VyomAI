@@ -31,7 +31,7 @@ class EncoderLayer(nn.Module):
         return out
     
 class Embeddings(nn.Module):
-    def __init__(self, config,pos_embedding: Optional[str] = 'absolute'):
+    def __init__(self, config,pos_embedding: Optional[str] = 'absolute') -> None:
         super().__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         if _position_embeddings.get(pos_embedding,None):
@@ -91,6 +91,9 @@ class EncoderModel(nn.Module):
     def from_config(cls,config) -> nn.Module:
         return cls(config)
     
+
+   
+    
 class EncoderForMaskedLM(nn.Module):
     def __init__(self,config) -> None:
         super().__init__()
@@ -105,3 +108,4 @@ class EncoderForMaskedLM(nn.Module):
     @classmethod
     def from_config(cls,config) -> nn.Module:
         return cls(config)
+    
