@@ -19,7 +19,7 @@ class LoRALinear(nn.Module):
         self.dropout = nn.Dropout(lora_dropout)
     
     def forward(self,x):
-        lora_output = self.alpha * F.linear(F.linear(x,self.A,bias=None),self.B)      #(x @ self.A @ self.B)
+        lora_output = self.alpha * F.linear(F.linear(x,self.A),self.B)      
         lora_output = self.dropout(lora_output)
         return lora_output
     
@@ -46,25 +46,7 @@ class MergeLoRALinear(nn.Module):
     def forward(self, x):
         
         linear_output = self.linear(x)
-        lora_output = self.alpha * F.linear(F.linear(x,self.A,bias=None),self.B)      #(x @ self.A @ self.B)
+        lora_output = self.alpha * F.linear(F.linear(x,self.A),self.B)      
         lora_output = self.dropout(lora_output)
         return linear_output+lora_output
 
-# lora_config = {
-#     'rank': 4,
-#     'alpha': 8,
-#     'lora_dropout': 0.05,
-#     'modules': ['query_proj','value_proj']
-# }
-# apply_lora = partial(
-#     LoRALinear,
-#     rank=lora_config['rank'],
-#     alpha=lora_config['alpha'],
-#     lora_dropout=lora_config['lora_dropout']
-# )
-#     for p in model.parameters():
-#     p.requires_grad = False
-
-# for layer in model.deberta.encoder.layer:
-#     if 'query_proj' in lora_config['modules']:
-#         layer.attention.self.query_proj = apply_lora(layer.attention.self.query_proj)
