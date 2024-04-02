@@ -25,7 +25,10 @@ class EncoderAttention(nn.Module):
                 f"heads ({config.num_attention_heads})"
             )
         self.head_size = int(config.hidden_size//config.num_attention_heads)
-        self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
+        # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
+        self.q = nn.Linear(config.hidden_size, config.hidden_size)
+        self.k = nn.Linear(config.hidden_size, config.hidden_size)
+        self.v = nn.Linear(config.hidden_size, config.hidden_size)
         self.output = SelfOutput(config=config)
         self.num_attention_heads = config.num_attention_heads
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
@@ -33,7 +36,10 @@ class EncoderAttention(nn.Module):
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
 
     def forward(self,hidden_state: torch.Tensor,mask: torch.Tensor) -> torch.Tensor:
-        q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
+        q = self.q(hidden_state)
+        k = self.k(hidden_state)
+        v = self.v(hidden_state)
+        # q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
         #place holder for RoPe operation
         q = rearrange(q,"b l (h d) -> b h l d",h=self.num_attention_heads)
         k = rearrange(k,"b l (h d) -> b h l d",h=self.num_attention_heads)
