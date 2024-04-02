@@ -1,6 +1,8 @@
 #for model making utils
 import torch.nn as nn
-from typing import Dict
+from typing import Dict,Tuple,List
+import torch
+from tqdm import tqdm
 
 def model_size(model: nn.Module) -> float:
     param_size = 0
@@ -32,3 +34,39 @@ def model_parameters(model: nn.Module) -> Dict[str,int]:
     total_params = sum([p.numel() for p in model.parameters()])
     trainable_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
     return {'total_params':total_params,'trainable_params':trainable_params}
+
+
+def timing_cuda(model: nn.Module, num_batches: int, input_ids: torch.Tensor, masks: torch.Tensor, is_decoder: bool = False, generation_config=None,device: str = "cuda") -> Tuple[float,float]:
+    if is_decoder:
+        model.generation_config.eos_token_id = None
+
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+
+    # We need NOT call torch.cuda.empty_cache() here as it appears to negate the warmup.
+
+    latencies = []
+    for _ in tqdm(range(num_batches)):
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        torch.cuda.synchronize()
+        start_event.record()
+
+        if is_decoder:
+            with torch.no_grad():
+                _ = model.generate(input_ids, attention_mask=masks, generation_config=generation_config)
+        else:
+            with torch.no_grad():
+                _ = model(input_ids, masks)
+        end_event.record()
+        torch.cuda.synchronize()
+
+        latency_ms = start_event.elapsed_time(end_event)
+        # print(f"\nLatency per token: {latency_ms / generation_config.min_new_tokens:.3f} ms")
+        latencies.append(latency_ms)
+        if is_decoder:
+            print(f"\nLatency per token: {latency_ms / generation_config.min_new_tokens:.3f} ms")
+            # min_new_tokens (int, optional) — The minimum numbers of tokens to generate, ignoring the number of tokens in the prompt.
+    max_memory = torch.cuda.max_memory_allocated(device=device)*1e-6 # in MB
+
+    return torch.mean.mean(latencies), max_memory

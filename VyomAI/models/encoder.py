@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Optional,Tuple
-from ..layers.attention import EncoderAttention
+from ..layers.attention import EncoderAttention,EncoderAttentionGqa
 from ..layers.positional_embeddings import AbsoluteEncoding,SinusoidalEncoding,RelativePositionalEncoding
 from ..layers.ffn import FeedForward
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ class MLMOutput(object):
 class EncoderLayer(nn.Module):
     def __init__(self,config ) -> None:
         super().__init__()
-        self.attention =  EncoderAttention(config)
+        self.attention =  EncoderAttentionGqa(config) if config.attention=='gqa' else EncoderAttention(config)
         self.feed_forward = FeedForward(config)
 
     def forward(self,hidden_state: torch.Tensor,mask: torch.Tensor) -> torch.Tensor:
