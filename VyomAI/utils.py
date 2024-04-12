@@ -69,4 +69,4 @@ def timing_cuda(model: nn.Module, num_batches: int, input_ids: torch.Tensor, mas
             # min_new_tokens (int, optional) — The minimum numbers of tokens to generate, ignoring the number of tokens in the prompt.
     max_memory = torch.cuda.max_memory_allocated(device=device)*1e-6 # in MB
 
-    return torch.mean.mean(latencies), max_memory
+    return torch.mean.mean(latencies), max_memory #time =  milisecond

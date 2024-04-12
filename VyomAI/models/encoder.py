@@ -20,11 +20,13 @@ class MLMOutput(object):
     logits: torch.Tensor
 
 class EncoderLayer(nn.Module):
-    def __init__(self,config ) -> None:
+    def __init__(self,config,layer_idx: int  ) -> None:
         super().__init__()
-        self.attention =  EncoderAttentionGqa(config) if config.attention=='gqa' else EncoderAttention(config)
+        self.attention =  EncoderAttentionGqa(config,layer_idx=layer_idx) if getattr(config,'attention',None)=='gqa' else EncoderAttention(config,layer_idx=layer_idx)
+        if getattr(config,'attention',None)=='gqa' and layer_idx==0: #avoid to print m times
+            print("Using GQA Attention")
         self.feed_forward = FeedForward(config)
-
+        self.layer_idx  = layer_idx 
     def forward(self,hidden_state: torch.Tensor,mask: torch.Tensor) -> torch.Tensor:
         out = self.attention(hidden_state=hidden_state,mask=mask)
         out = self.feed_forward(out,hidden_state)
@@ -34,15 +36,19 @@ class Embeddings(nn.Module):
     def __init__(self, config,pos_embedding: Optional[str] = 'absolute') -> None:
         super().__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        if _position_embeddings.get(pos_embedding,None):
+        if not getattr(config,'is_rope',None) and _position_embeddings.get(pos_embedding,None):
             self.position_embeddings = _position_embeddings.get(pos_embedding)(config)
-        else:
+        elif not getattr(config,'is_rope',None) :
             self.position_embeddings = AbsoluteEncoding(config)
+        else:
+            self.position_embeddings  = None
         self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
     
     def forward(self,input_ids: torch.Tensor) -> torch.Tensor:
-        out = self.word_embeddings(input_ids)+self.position_embeddings(input_ids)
+        out = self.word_embeddings(input_ids)
+        if self.position_embeddings is not None:
+            out = out+self.position_embeddings(input_ids)
         out  = self.layerNorm(out)
         out  = self.dropout(out)
         return out
@@ -74,8 +80,8 @@ class EncoderModel(nn.Module):
     def __init__(self,config) -> None:
         super().__init__()
         self.embeddings = Embeddings(config,pos_embedding=config.position_embedding_type)
-        self.all_layer = nn.ModuleList([EncoderLayer(config) 
-                                     for _ in range(config.num_hidden_layers)])
+        self.all_layer = nn.ModuleList([EncoderLayer(config,layer_idx ) 
+                                     for layer_idx  in range(config.num_hidden_layers)])
         
     def forward(self,input_ids: torch.Tensor,attention_mask: torch.Tensor) -> torch.Tensor:
         hidden_state = self.embeddings(input_ids=input_ids)
