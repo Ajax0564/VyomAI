@@ -42,6 +42,8 @@ class Embeddings(nn.Module):
             self.position_embeddings = AbsoluteEncoding(config)
         else:
             self.position_embeddings  = None
+        if self.position_embeddings is None:
+            print("Ignoring Sinusoidal or Absolute position embeddings because RoPE is enable")
         self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
     
