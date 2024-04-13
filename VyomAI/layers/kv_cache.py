@@ -1,5 +1,6 @@
 # mainly 2way to do one keep it into the model init like llama https://github.com/meta-llama/llama/blob/main/llama/model.py
-# or keep it  (model-forward) enable it on inference
+# every attention layer have its own kv-cache storage
+# or keep all attention layer kv-cache into singe storage
 # inspired from Transformer cache_utils
 
 from dataclasses import dataclass
@@ -22,32 +23,12 @@ class DynamicCache:
             0  # Used in `generate` to keep tally of how many tokens the cache has seen
         )
 
-    def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Support for backwards-compatible `past_key_value` indexing, e.g. `past_key_value[0][0].shape[2]` to get the
-        sequence length.
-        """
-        if layer_idx < len(self):
-            return (self.key_cache[layer_idx], self.value_cache[layer_idx])
-        else:
-            raise KeyError(
-                f"Cache only has {len(self)} layers, attempted to access layer with index {layer_idx}"
-            )
-
-    def __iter__(self) -> Generator[Tuple[torch.Tensor]]:
-        """
-        Support for backwards-compatible `past_key_value` iteration, e.g. `for x in past_key_value:` to iterate over
-        keys and values
-        """
-        for layer_idx in range(len(self)):
-            yield (self.key_cache[layer_idx], self.value_cache[layer_idx])
-
     def __len__(self) -> int:
         """
         Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
         to the number of layers in the model.
         """
-        return len(self.key_cache)
+        return self.key_cache.shape[-2]
 
     def update(
         self,
@@ -55,7 +36,7 @@ class DynamicCache:
         value_states: torch.Tensor,
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """
         Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -77,50 +58,22 @@ class DynamicCache:
             self._seen_tokens += key_states.shape[-2]
 
         # Update the cache first iteration
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
+        if len(self.key_cache) == 0:
+            # print("Filling first iteration ", layer_idx)
+            self.key_cache = key_states.clone()
+            self.value_cache = value_states.clone()
         else:
-            self.key_cache[layer_idx] = torch.cat(
-                [self.key_cache[layer_idx], key_states], dim=-2
-            )
-            self.value_cache[layer_idx] = torch.cat(
-                [self.value_cache[layer_idx], value_states], dim=-2
-            )
-
-        return self.key_cache[layer_idx], self.value_cache[layer_idx]
+            self.key_cache = torch.cat([self.key_cache, key_states], dim=-2)
+            self.value_cache = torch.cat([self.value_cache, value_states], dim=-2)
+        # print(len(self.key_cache))
+        return self.key_cache, self.value_cache
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
-        if len(self.key_cache) <= layer_idx:
+        if len(self.key_cache) <= 0:
             return 0
-        return self.key_cache[layer_idx].shape[-2]
+        return self.key_cache.shape[-2]
 
     def get_max_length(self) -> Optional[int]:
         """Returns the maximum sequence length of the cached states. DynamicCache does not have a maximum length."""
         return None
-
-    # def reorder_cache(self, beam_idx: torch.LongTensor):
-    #     """Reorders the cache for beam search, given the selected beam indices."""
-    #     for layer_idx in range(len(self.key_cache)):
-    #         device = self.key_cache[layer_idx].device
-    #         self.key_cache[layer_idx] = self.key_cache[layer_idx].index_select(0, beam_idx.to(device))
-    #         device = self.value_cache[layer_idx].device
-    #         self.value_cache[layer_idx] = self.value_cache[layer_idx].index_select(0, beam_idx.to(device))
-
-    # def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor], Tuple[torch.Tensor]]:
-    #     """Converts the `DynamicCache` instance into the its equivalent in the legacy cache format."""
-    #     legacy_cache = ()
-    #     for layer_idx in range(len(self)):
-    #         legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
-    #     return legacy_cache
-
-    # @classmethod
-    # def from_legacy_cache(cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "DynamicCache":
-    #     """Converts a cache in the legacy cache format into an equivalent `DynamicCache`."""
-    #     cache = cls()
-    #     if past_key_values is not None:
-    #         for layer_idx in range(len(past_key_values)):
-    #             key_states, value_states = past_key_values[layer_idx]
-    #             cache.update(key_states, value_states, layer_idx)
-    #     return cache

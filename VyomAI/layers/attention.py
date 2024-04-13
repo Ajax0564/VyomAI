@@ -72,7 +72,9 @@ class EncoderAttention(nn.Module):
         if not self.flash and self.layer_idx == 0:  # avoid to print m times:
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
 
-    def forward(self, hidden_state: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, hidden_state: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
         v = self.v(hidden_state)
@@ -85,7 +87,7 @@ class EncoderAttention(nn.Module):
             cos, sin = self.rotary_emb(v)
             q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=mask, is_causal=False
+            query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
@@ -136,7 +138,9 @@ class EncoderAttentionGqa(nn.Module):
         if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
             print("Using Rotatry Embedding")
 
-    def forward(self, hidden_state: torch.Tensor, mask: torch.tensor) -> torch.Tensor:
+    def forward(
+        self, hidden_state: torch.Tensor, attention_mask: torch.tensor
+    ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
         v = self.v(hidden_state)
@@ -151,7 +155,7 @@ class EncoderAttentionGqa(nn.Module):
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=mask, is_causal=False
+            query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
@@ -194,10 +198,8 @@ class DecoderAttention(nn.Module):
     def forward(
         self,
         hidden_state: torch.Tensor,
-        mask: torch.Tensor,
-        past_key_value: Optional[object],
-        use_cache: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor,
+        past_key_value: Optional[object] = None,
     ) -> Tuple[torch.Tensor, object]:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -218,7 +220,6 @@ class DecoderAttention(nn.Module):
                 cache_kwargs = {
                     "sin": sin,
                     "cos": cos,
-                    "cache_position": cache_position,
                 }
                 k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
         else:
@@ -241,6 +242,7 @@ class DecoderAttentionGqa(nn.Module):
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
             )
+        self.is_casual = True
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -280,10 +282,8 @@ class DecoderAttentionGqa(nn.Module):
     def forward(
         self,
         hidden_state: torch.Tensor,
-        mask: torch.tensor,
-        past_key_value: Optional[object],
-        use_cache: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.tensor,
+        past_key_value: Optional[object] = None,
     ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -298,15 +298,17 @@ class DecoderAttentionGqa(nn.Module):
         if self.rotary_emb is not None:
             cos, sin = self.rotary_emb(v)
             q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            cache_kwargs = {"sin": sin, "cos": cos}
             k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
         else:
             k, v = past_key_value.update(k, v, self.layer_idx)
 
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
+        # if attention_mask is not None:
+        #     causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=mask, is_causal=False
+            query=q, key=k, value=v, is_causal=self.is_casual
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)

@@ -42,8 +42,10 @@ class EncoderLayer(nn.Module):
         self.feed_forward = FeedForward(config)
         self.layer_idx = layer_idx
 
-    def forward(self, hidden_state: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        out = self.attention(hidden_state=hidden_state, mask=mask)
+    def forward(
+        self, hidden_state: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        out = self.attention(hidden_state=hidden_state, attention_mask=attention_mask)
         out = self.feed_forward(out, hidden_state)
         return out
 
