@@ -38,7 +38,7 @@ class EncoderLayer(nn.Module):
         if (
             getattr(config, "attention", None) == "gqa" and layer_idx == 0
         ):  # avoid to print m times
-            print("Using GQA Attention")
+            print("Encoder Using GQA Attention")
         self.feed_forward = FeedForward(config)
         self.layer_idx = layer_idx
 
@@ -66,7 +66,7 @@ class Embeddings(nn.Module):
             self.position_embeddings = None
         if self.position_embeddings is None:
             print(
-                "Ignoring Sinusoidal or Absolute position embeddings because RoPE is enable"
+                "Encoder Ignoring Sinusoidal or Absolute position embeddings because RoPE is enable"
             )
         self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)

@@ -67,7 +67,7 @@ class EncoderAttention(nn.Module):
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
         )
         if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
-            print("Using Rotatry Embedding")
+            print("Encoder Using Rotatry Embedding")
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times:
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -136,7 +136,7 @@ class EncoderAttentionGqa(nn.Module):
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
         )
         if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
-            print("Using Rotatry Embedding")
+            print("Encoder Using Rotatry Embedding")
 
     def forward(
         self, hidden_state: torch.Tensor, attention_mask: torch.tensor
@@ -190,7 +190,7 @@ class DecoderAttention(nn.Module):
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
         )
         if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
-            print("Using Rotatry Embedding")
+            print("Decoder Using Rotatry Embedding")
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times:
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -298,10 +298,15 @@ class DecoderAttentionGqa(nn.Module):
         if self.rotary_emb is not None:
             cos, sin = self.rotary_emb(v)
             q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            cache_kwargs = {"sin": sin, "cos": cos}
-            k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
+            if past_key_value is not None:
+                cache_kwargs = {
+                    "sin": sin,
+                    "cos": cos,
+                }
+                k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
         else:
-            k, v = past_key_value.update(k, v, self.layer_idx)
+            if past_key_value is not None:
+                k, v = past_key_value.update(k, v, self.layer_idx)
 
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
@@ -312,4 +317,208 @@ class DecoderAttentionGqa(nn.Module):
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
-        return out
+        return out, past_key_value
+
+
+class EncoderDecoderAttention(nn.Module):
+    def __init__(self, config, layer_idx: int) -> None:
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        self.head_size = int(config.hidden_size // config.num_attention_heads)
+        self.attention_bias = getattr(config, "attention_bias", False)
+        self.layer_idx = layer_idx
+        # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
+        self.q = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.k = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.v = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.output = SelfOutput(config=config)
+        self.num_attention_heads = config.num_attention_heads
+        self.rotary_emb = (
+            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
+        )
+        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
+            print("EncoderDecoder Attention Using Rotatry Embedding")
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        if not self.flash and self.layer_idx == 0:  # avoid to print m times:
+            print("WARNING: Flash Attention requires PyTorch >= 2.0")
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        key_value_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_value: Optional[object] = None,
+    ) -> Tuple[torch.Tensor, object]:
+        q = self.q(hidden_state)
+
+        q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        past_key_value = getattr(
+            self, "past_key_value", past_key_value
+        )  # no need for this line in our case
+        if (
+            past_key_value is None or len(past_key_value) == 0
+        ):  # train or 0 len of past_key_value
+            k = self.k(key_value_states)
+            v = self.v(key_value_states)
+            k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+            v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+            if self.rotary_emb is not None:
+                cos, sin = self.rotary_emb(v)
+                q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+            if past_key_value is not None and len(past_key_value) == 0:
+                k, v = past_key_value.update(
+                    k, v
+                )  # store it will be same for all iteration
+        else:
+            k, v = past_key_value.get()
+
+        # if self.rotary_emb is not None and past_key_value is None:  # first iteration with rope
+        #     k = self.k(key_value_states)
+        #     v = self.v(key_value_states)
+        #     k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #     v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #     cos, sin = self.rotary_emb(v)
+        #     q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+        #     if past_key_value is not None:
+        #         cache_kwargs = {
+        #             "sin": sin,
+        #             "cos": cos,
+        #         }
+        #         k, v = past_key_value.update(k, v, cache_kwargs)
+        # elif past_key_value is not None:  # first iteration
+        #     if len(past_key_value) == 0:
+        #         k = self.k(key_value_states)
+        #         v = self.v(key_value_states)
+        #         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #         k, v = past_key_value.update(
+        #             k, v
+        #         )  # store it will be same for all iteration
+        # else:  # already have past_key_value
+        #     k, v = past_key_value.get()
+
+        out = torch.nn.functional.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attention_mask
+        )
+        out = rearrange(out, "b h l d -> b l (h d)")
+        out = self.output(out, hidden_state)
+        return out, past_key_value
+
+
+class EncoderDecoderAttentionGqa(nn.Module):
+    def __init__(self, config, layer_idx: int) -> None:
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        self.is_casual = True
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        if not self.flash and self.layer_idx == 0:  # avoid to print m times
+            print("WARNING: Flash Attention requires PyTorch >= 2.0")
+        self.layer_idx = layer_idx
+        self.head_dim = int(config.hidden_size // config.num_attention_heads)
+        self.num_attention_heads = config.num_attention_heads
+        self.num_key_value_heads = getattr(config, "num_key_value_heads", 4)
+        self.num_key_value_groups = self.num_attention_heads // self.num_key_value_heads
+        if (
+            self.num_attention_heads % self.num_key_value_heads != 0
+            or self.num_attention_heads < self.num_key_value_heads
+        ):
+            raise ValueError(
+                f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
+            )
+        self.attention_bias = getattr(config, "attention_bias", False)
+        self.output = SelfOutput(config=config)
+        self.q = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.k = nn.Linear(
+            config.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=self.attention_bias,
+        )
+        self.v = nn.Linear(
+            config.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=self.attention_bias,
+        )
+        self.rotary_emb = (
+            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
+        )
+        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
+            print("EncoderDecoder Attention Using Rotatry Embedding")
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        key_value_states: Optional[torch.Tensor],
+        attention_mask: torch.tensor,
+        past_key_value: Optional[object] = None,
+    ) -> torch.Tensor:
+        q = self.q(hidden_state)
+
+        q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        past_key_value = getattr(
+            self, "past_key_value", past_key_value
+        )  # no need for this line in our case
+        if (
+            past_key_value is None or len(past_key_value) == 0
+        ):  # train or 0 len of past_key_value
+            k = self.k(key_value_states)
+            v = self.v(key_value_states)
+            k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+            v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+            if self.rotary_emb is not None:
+                cos, sin = self.rotary_emb(v)
+                q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+            if past_key_value is not None and len(past_key_value) == 0:
+                k, v = past_key_value.update(
+                    k, v
+                )  # store it will be same for all iteration
+        else:
+            k, v = past_key_value.get()
+        # if self.rotary_emb is not None:  # first iteration with rope
+        #     k = self.k(key_value_states)
+        #     v = self.v(key_value_states)
+        #     k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #     v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #     cos, sin = self.rotary_emb(v)
+        #     q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+        #     if past_key_value is not None and len(past_key_value)==0:
+        #         cache_kwargs = {
+        #             "sin": sin,
+        #             "cos": cos,
+        #         }
+        #         k, v = past_key_value.update(k, v, cache_kwargs)
+        # elif past_key_value is not None:  # first iteration
+        #     if len(past_key_value) == 0:
+        #         k = self.k(key_value_states)
+        #         v = self.v(key_value_states)
+        #         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        #         k, v = past_key_value.update(
+        #             k, v
+        #         )  # store it will be same for all iteration
+        # else:  # already have past_key_value
+        #     k, v = past_key_value.get()
+
+        k = repeat_kv(k, n_rep=self.num_key_value_groups)
+        v = repeat_kv(v, n_rep=self.num_key_value_groups)
+        out = torch.nn.functional.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attention_mask
+        )
+        out = rearrange(out, "b h l d -> b l (h d)")
+        out = self.output(out, hidden_state)
+        return out, past_key_value

@@ -17,13 +17,15 @@ class DynamicCache:
     """
 
     def __init__(self) -> None:
-        self.key_cache: List[torch.Tensor] = []
-        self.value_cache: List[torch.Tensor] = []
+        self.key_cache: torch.Tensor = None
+        self.value_cache: torch.Tensor = None
         self._seen_tokens = (
             0  # Used in `generate` to keep tally of how many tokens the cache has seen
         )
 
     def __len__(self) -> int:
+        if self.key_cache is None:
+            return 0
         """
         Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
         to the number of layers in the model.
@@ -34,9 +36,9 @@ class DynamicCache:
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
+        layer_idx: Optional[int] = None,
         cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -58,19 +60,22 @@ class DynamicCache:
             self._seen_tokens += key_states.shape[-2]
 
         # Update the cache first iteration
-        if len(self.key_cache) == 0:
-            # print("Filling first iteration ", layer_idx)
+        if self.key_cache is None:
+
             self.key_cache = key_states.clone()
             self.value_cache = value_states.clone()
         else:
             self.key_cache = torch.cat([self.key_cache, key_states], dim=-2)
             self.value_cache = torch.cat([self.value_cache, value_states], dim=-2)
-        # print(len(self.key_cache))
+
+        return self.key_cache, self.value_cache
+
+    def get(self) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.key_cache, self.value_cache
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
-        if len(self.key_cache) <= 0:
+        if self.key_cache is None:
             return 0
         return self.key_cache.shape[-2]
 
