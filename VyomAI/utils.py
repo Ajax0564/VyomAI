@@ -1,8 +1,9 @@
-#for model making utils
+# for model making utils
 import torch.nn as nn
-from typing import Dict,Tuple,List
+from typing import Dict, Tuple, List
 import torch
 from tqdm import tqdm
+
 
 def model_size(model: nn.Module) -> float:
     param_size = 0
@@ -15,11 +16,12 @@ def model_size(model: nn.Module) -> float:
     size_all_mb = (param_size + buffer_size) / 1024**2
     return size_all_mb
 
+
 def init_weights(module: nn.Module) -> None:
     """Initialize the weights"""
     if isinstance(module, nn.Linear):
-        #copied from Transformer
-        module.weight.data.normal_(mean=0.0, std=0.02) #initializer_range": 0.02
+        # copied from Transformer
+        module.weight.data.normal_(mean=0.0, std=0.02)  # initializer_range": 0.02
         if module.bias is not None:
             module.bias.data.zero_()
     elif isinstance(module, nn.Embedding):
@@ -30,13 +32,22 @@ def init_weights(module: nn.Module) -> None:
         module.bias.data.zero_()
         module.weight.data.fill_(1.0)
 
-def model_parameters(model: nn.Module) -> Dict[str,int]:
+
+def model_parameters(model: nn.Module) -> Dict[str, int]:
     total_params = sum([p.numel() for p in model.parameters()])
     trainable_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
-    return {'total_params':total_params,'trainable_params':trainable_params}
+    return {"total_params": total_params, "trainable_params": trainable_params}
 
 
-def timing_cuda(model: nn.Module, num_batches: int, input_ids: torch.Tensor, masks: torch.Tensor, is_decoder: bool = False, generation_config=None,device: str = "cuda") -> Tuple[float,float]:
+def timing_cuda(
+    model: nn.Module,
+    num_batches: int,
+    input_ids: torch.Tensor,
+    masks: torch.Tensor,
+    is_decoder: bool = False,
+    generation_config=None,
+    device: str = "cuda",
+) -> Tuple[float, float]:
     if is_decoder:
         model.generation_config.eos_token_id = None
 
@@ -54,7 +65,9 @@ def timing_cuda(model: nn.Module, num_batches: int, input_ids: torch.Tensor, mas
 
         if is_decoder:
             with torch.no_grad():
-                _ = model.generate(input_ids, attention_mask=masks, generation_config=generation_config)
+                _ = model.generate(
+                    input_ids, attention_mask=masks, generation_config=generation_config
+                )
         else:
             with torch.no_grad():
                 _ = model(input_ids, masks)
@@ -65,8 +78,10 @@ def timing_cuda(model: nn.Module, num_batches: int, input_ids: torch.Tensor, mas
         # print(f"\nLatency per token: {latency_ms / generation_config.min_new_tokens:.3f} ms")
         latencies.append(latency_ms)
         if is_decoder:
-            print(f"\nLatency per token: {latency_ms / generation_config.min_new_tokens:.3f} ms")
+            print(
+                f"\nLatency per token: {latency_ms / generation_config.min_new_tokens:.3f} ms"
+            )
             # min_new_tokens (int, optional) — The minimum numbers of tokens to generate, ignoring the number of tokens in the prompt.
-    max_memory = torch.cuda.max_memory_allocated(device=device)*1e-6 # in MB
+    max_memory = torch.cuda.max_memory_allocated(device=device) * 1e-6  # in MB
 
-    return torch.mean.mean(latencies), max_memory #time =  milisecond
+    return torch.mean.mean(latencies), max_memory  # time =  milisecond
