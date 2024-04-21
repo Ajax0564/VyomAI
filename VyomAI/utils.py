@@ -1,6 +1,6 @@
 # for model making utils
 import torch.nn as nn
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 import torch
 from tqdm import tqdm
 
@@ -65,9 +65,7 @@ def timing_cuda(
 
         if is_decoder:
             with torch.no_grad():
-                _ = model.generate(
-                    input_ids, attention_mask=masks, generation_config=generation_config
-                )
+                _ = model(input_ids, attention_mask=masks)
         else:
             with torch.no_grad():
                 _ = model(input_ids, masks)
@@ -85,3 +83,49 @@ def timing_cuda(
     max_memory = torch.cuda.max_memory_allocated(device=device) * 1e-6  # in MB
 
     return torch.mean.mean(latencies), max_memory  # time =  milisecond
+
+
+def generate(
+    model: nn.Module,
+    tokenize_text: torch.Tensor,
+    max_new_tokens: Optional[int] = 3,
+    temperature: Optional[float] = 1.0,
+    do_sample: Optional[bool] = False,
+    use_cache: Optional[bool] = False,
+) -> torch.Tensor:
+    """
+    Take a conditioning sequence of indices idx (LongTensor of shape (1,t)) and complete
+    the sequence max_new_tokens times, feeding the predictions back into the model each time.
+    Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+    """
+    #     text = tokenizer(text, truncation=True, padding=True, return_tensors="pt")
+    idx = tokenize_text
+    idx_next = idx
+    index = 0
+    take = -1
+    #     for cur_pos in range(min_promp, total_len)
+    for _ in range(max_new_tokens):
+        if use_cache == False:
+            logits = model(input_ids=idx).logits
+        else:
+            logits = model(
+                input_ids=idx_next, start_pos=index, use_cache=use_cache
+            ).logits
+
+        if take != 0:
+            logits = logits[:, take, :] / temperature
+            if use_cache == True:
+                take = 0
+        else:
+            logits = logits[:, -1] / temperature
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        # either sample from the distribution or take the most likely element
+        if do_sample:
+            idx_next = torch.multinomial(probs, num_samples=1)
+        else:
+            _, idx_next = torch.topk(probs, k=1, dim=-1)
+
+        idx = torch.cat((idx, idx_next), dim=1)
+        index = idx.size()[1] - 1  # model already have idx-1 kv-cache stored
+
+    return idx

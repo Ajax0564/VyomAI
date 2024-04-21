@@ -39,7 +39,7 @@ class FeedForward(nn.Module):
         )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        if _ACT_.get(config.hidden_act, None):
+        if _ACT_.get(getattr(config, "hidden_act", None), None):
             self.act_fn = _ACT_[config.hidden_act]
         else:
             self.act_fn = nn.GELU()
