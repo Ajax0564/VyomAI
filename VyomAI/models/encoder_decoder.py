@@ -10,10 +10,10 @@ from ..layers.attention import (
 from ..layers.positional_embeddings import (
     AbsoluteEncoding,
     SinusoidalEncoding,
-    RelativePositionalEncoding,
+    RotaryEmbedding,
 )
 from ..layers.ffn import FeedForward
-from ..layers.kv_cache import DynamicCache
+from ..layers.kv_cache import DynamicCache, StaticCache
 from .encoder import EncoderModel
 
 from dataclasses import dataclass
@@ -21,36 +21,31 @@ from dataclasses import dataclass
 _position_embeddings = {
     "absolute": AbsoluteEncoding,
     "sinusoidal": SinusoidalEncoding,
-}  #'relative':RelativePositionalEncoding
+}
 
 
 @dataclass
 class Seq2SeqOutput(object):
     key_value_states: torch.Tensor
     logits: torch.Tensor
-    past_key_value: Optional[object]
 
 
 class Seq2SeqDecoderLayer(nn.Module):
-    def __init__(self, config, layer_idx: int) -> None:
+    def __init__(self, config, layer_idx: int = 0, attention_type: str = None) -> None:
         super().__init__()
         self.attention = (
             DecoderAttentionGqa(config, layer_idx=layer_idx)
-            if getattr(config, "attention", None) == "gqa"
+            if attention_type == "gqa"
             else DecoderAttention(config, layer_idx=layer_idx)
         )
-        if (
-            getattr(config, "attention", None) == "gqa" and layer_idx == 0
-        ):  # avoid to print m times
-            print("Using GQA Attention")
+        if attention_type == "gqa" and layer_idx == 0:  # avoid to print m times
+            print("Decoder Using GQA Attention")
         self.cross_attention = (
             EncoderDecoderAttentionGqa(config, layer_idx=layer_idx)
-            if getattr(config, "cross_attention", None) == "gqa"
+            if attention_type == "gqa" == "gqa"
             else EncoderDecoderAttention(config, layer_idx=layer_idx)
         )
-        if (
-            getattr(config, "corss_attention", None) == "gqa" and layer_idx == 0
-        ):  # avoid to print m times
+        if attention_type == "gqa" and layer_idx == 0:  # avoid to print m times
             print("Using GQA in Cross Attention")
         self.feed_forward = FeedForward(config)
         self.layer_idx = layer_idx
@@ -61,51 +56,22 @@ class Seq2SeqDecoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         encoder_hidden_state: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[object] = None,
-        use_cache: bool = False,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
-        out, past_key_value = self.attention(
-            hidden_state=hidden_state, attention_mask=attention_mask
+        out = self.attention(
+            hidden_state=hidden_state,
+            attention_mask=attention_mask,
+            use_cache=use_cache,
+            start_pos=start_pos,
         )
-        out, past_key_value = self.cross_attention(
+        out = self.cross_attention(
             hidden_state=out,
             key_value_states=encoder_hidden_state,
             attention_mask=encoder_attention_mask,
         )
 
         out = self.feed_forward(out, out)
-        return out, past_key_value
-
-
-class Embeddings(nn.Module):
-    def __init__(self, config, pos_embedding: Optional[str] = "absolute") -> None:
-        super().__init__()
-        self.word_embeddings = nn.Embedding(
-            config.vocab_size,
-            config.hidden_size,
-            padding_idx=getattr(config, "pad_token_id", None),
-        )
-        if not getattr(config, "is_rope", None) and _position_embeddings.get(
-            pos_embedding, None
-        ):
-            self.position_embeddings = _position_embeddings.get(pos_embedding)(config)
-        elif not getattr(config, "is_rope", None):
-            self.position_embeddings = AbsoluteEncoding(config)
-        else:
-            self.position_embeddings = None
-        if self.position_embeddings is None:
-            print(
-                "Decoder Ignoring Sinusoidal or Absolute position embeddings because RoPE is enable"
-            )
-        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        out = self.word_embeddings(input_ids)
-        if self.position_embeddings is not None:
-            out = out + self.position_embeddings(input_ids)
-        out = self.layerNorm(out)
-        out = self.dropout(out)
         return out
 
 
@@ -133,11 +99,29 @@ class LMHead(nn.Module):
 
 
 class Seq2SeqDecoderModel(nn.Module):
-    def __init__(self, config) -> None:
+    def __init__(
+        self,
+        config,
+        pos_embedding_type: Optional[str] = "absolute",
+        attention_type: str = None,
+    ) -> None:
         super().__init__()
-        self.embeddings = Embeddings(
-            config, pos_embedding=config.position_embedding_type
+        self.word_embeddings = nn.Embedding(
+            config.vocab_size,
+            config.hidden_size,
+            padding_idx=getattr(config, "pad_token_id", None),
         )
+        if _position_embeddings.get(pos_embedding_type, None) is not None:
+            self.position_embeddings = _position_embeddings.get(pos_embedding_type)(
+                config
+            )
+        else:
+            self.position_embeddings = None
+        if pos_embedding_type == "rope":
+            self.emb_freq = RotaryEmbedding(config)(config.max_position_embeddings)
+            print(
+                "Encoder Ignoring sinusoidal or absolute position embeddings because rope,is enable"
+            )
         self.all_layer = nn.ModuleList(
             [
                 Seq2SeqDecoderLayer(config, layer_idx)
@@ -152,21 +136,45 @@ class Seq2SeqDecoderModel(nn.Module):
         encoder_hidden_state: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[object] = None,
-        use_cache: bool = False,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
-        hidden_state = self.embeddings(input_ids=input_ids)
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        # SDPA requires attn_mask dtype to be bool or to match query dtype
-        attention_mask = attention_mask.bool()
+        _bsz, seqlen = input_ids.shape
+        hidden_state = self.word_embeddings(input_ids)
+        freqs = None
+        if self.position_embeddings is not None:
+            pos_info = pos_info = self.position_embeddings(start_pos + seqlen)[
+                :, start_pos : start_pos + seqlen, :
+            ].to(input_ids.device)
+            hidden_state = hidden_state + pos_info
+        else:
+            freqs = self.emb_freq[:, start_pos : start_pos + seqlen].to(
+                input_ids.device
+            )
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=input_ids.device)
+
+            mask = torch.triu(mask, diagonal=1)
+
+            # When performing key-value caching, we compute the attention scores
+            # only for the new sequence. Thus, the matrix of scores is of size
+            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+            # j > cache_len + i, since row i corresponds to token cache_len + i.
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=input_ids.device), mask]
+            ).type_as(hidden_state)
 
         for layer in self.all_layer:
-            hidden_state, past_key_value = layer(
+            hidden_state = layer(
                 hidden_state=hidden_state,
-                attention_mask=attention_mask,
+                attention_mask=mask,
                 encoder_hidden_state=encoder_hidden_state,
-                encoder_attention_mask=encoder_attention_mask.bool(),
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                start_pos=start_pos,
             )
-        return hidden_state, past_key_value
+        return hidden_state
 
     @classmethod
     def from_config(cls, config) -> nn.Module:
@@ -175,11 +183,32 @@ class Seq2SeqDecoderModel(nn.Module):
 
 class EncoderDecoderModel(nn.Module):
 
-    def __init__(self, config, encoder: Optional[nn.Module] = None) -> None:
+    def __init__(
+        self,
+        encoder_config,
+        decoder_config,
+        encoder: Optional[nn.Module] = None,
+        encoder_pos_embedding_type: Optional[str] = "absolute",
+        encoder_attention_type: str = None,
+        decoder_pos_embedding_type: Optional[str] = "absolute",
+        decoder_attention_type: str = None,
+    ) -> None:
         super().__init__()
-        self.encoder = encoder if encoder is not None else EncoderModel(config=config)
-        self.decoder = Seq2SeqDecoderModel(config=config)
-        self.lm_head = LMHead(config=config)
+        self.encoder = (
+            encoder
+            if encoder is not None
+            else EncoderModel(
+                config=encoder_config,
+                pos_embedding_type=encoder_pos_embedding_type,
+                attention_type=encoder_attention_type,
+            )
+        )
+        self.decoder = Seq2SeqDecoderModel(
+            config=decoder_config,
+            pos_embedding_type=decoder_pos_embedding_type,
+            attention_type=decoder_attention_type,
+        )
+        self.lm_head = LMHead(config=decoder_config)
 
     def forward(
         self,
@@ -188,42 +217,66 @@ class EncoderDecoderModel(nn.Module):
         decoder_input_ids: Optional[torch.LongTensor] = None,
         decoder_attention_mask: Optional[torch.LongTensor] = None,
         encoder_output: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ):
         if encoder_output is None:
             encoder_output = self.encoder(
                 input_ids=input_ids, attention_mask=attention_mask
             ).logits
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        attention_mask = attention_mask.bool()
-        decoder_output, past_key_value = self.decoder(
+        encoder_attention_mask = (
+            attention_mask.unsqueeze(1).unsqueeze(2).type_as(encoder_output)
+        )
+
+        decoder_output = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
             encoder_hidden_state=encoder_output,
-            encoder_attention_mask=attention_mask,
+            encoder_attention_mask=encoder_attention_mask,
+            use_cache=use_cache,
+            start_pos=start_pos,
         )
         decoder_output = self.lm_head(decoder_output)
-        return Seq2SeqOutput(
-            key_value_states=encoder_output,
-            logits=decoder_output,
-            past_key_value=past_key_value,
-        )
+        return Seq2SeqOutput(key_value_states=encoder_output, logits=decoder_output)
 
     def get_encoder(self) -> nn.Module:
         return self.encoder
 
+    def get_encoder_output(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+    ) -> object:
+        return self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+
     def get_decoder(self) -> Seq2SeqDecoderModel:
         return self.decoder
 
-    def _setup_cache(self):
+    def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
         for layer in self.decoder.all_layer:
-            layer.attention.past_key_value = DynamicCache()
-            layer.cross_attention.past_key_value = DynamicCache()
+            layer.attention.cache = cls(config)
+            layer.cross_attention.cache = cls(config)
 
-    def _reset_cache(self):
+    def _clean_cache(self) -> None:
         for layer in self.decoder.all_layer:
-            layer.attention.past_key_value = None
-            layer.cross_attention.past_key_value = None
+            layer.attention.cache = None
+            layer.cross_attention.cache = None
 
     @classmethod
-    def from_config(cls, config) -> nn.Module:
-        return cls(config)
+    def from_config(
+        cls,
+        encoder_config,
+        decoder_config,
+        encoder: Optional[nn.Module] = None,
+        encoder_pos_embedding_type: Optional[str] = "absolute",
+        encoder_attention_type: str = None,
+        decoder_pos_embedding_type: Optional[str] = "absolute",
+        decoder_attention_type: str = None,
+    ) -> nn.Module:
+        return cls(
+            encoder_config,
+            decoder_config,
+            encoder,
+            encoder_pos_embedding_type,
+            encoder_attention_type,
+            decoder_pos_embedding_type,
+            decoder_attention_type,
+        )

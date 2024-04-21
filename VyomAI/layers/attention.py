@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange, reduce, repeat
 from typing import Optional, Tuple
 from .ffn import SelfOutput
-from .positional_embeddings import rotate_half, apply_rotary_pos_emb, RotaryEmbedding
+from .positional_embeddings import apply_rotary_pos_emb, RotaryEmbedding
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -49,7 +49,7 @@ class EncoderAttention(nn.Module):
                 f"heads ({config.num_attention_heads})"
             )
         self.head_size = int(config.hidden_size // config.num_attention_heads)
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
         self.q = nn.Linear(
@@ -63,17 +63,12 @@ class EncoderAttention(nn.Module):
         )
         self.output = SelfOutput(config=config)
         self.num_attention_heads = config.num_attention_heads
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
-            print("Encoder Using Rotatry Embedding")
-        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
-        if not self.flash and self.layer_idx == 0:  # avoid to print m times:
-            print("WARNING: Flash Attention requires PyTorch >= 2.0")
 
     def forward(
-        self, hidden_state: torch.Tensor, attention_mask: torch.Tensor
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -83,9 +78,9 @@ class EncoderAttention(nn.Module):
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        if self.rotary_emb is not None:
-            cos, sin = self.rotary_emb(v)
-            q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)
+
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
@@ -117,7 +112,7 @@ class EncoderAttentionGqa(nn.Module):
             raise ValueError(
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.output = SelfOutput(config=config)
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
@@ -132,14 +127,12 @@ class EncoderAttentionGqa(nn.Module):
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
-            print("Encoder Using Rotatry Embedding")
 
     def forward(
-        self, hidden_state: torch.Tensor, attention_mask: torch.tensor
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -148,9 +141,8 @@ class EncoderAttentionGqa(nn.Module):
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
 
-        if self.rotary_emb is not None:
-            cos, sin = self.rotary_emb(v)
-            q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)
 
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
@@ -171,9 +163,8 @@ class DecoderAttention(nn.Module):
                 f"heads ({config.num_attention_heads})"
             )
         self.head_size = int(config.hidden_size // config.num_attention_heads)
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
-        self.is_casual = True
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
@@ -199,7 +190,9 @@ class DecoderAttention(nn.Module):
         self,
         hidden_state: torch.Tensor,
         attention_mask: torch.Tensor,
-        past_key_value: Optional[object] = None,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> Tuple[torch.Tensor, object]:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -209,29 +202,24 @@ class DecoderAttention(nn.Module):
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        past_key_value = getattr(
-            self, "past_key_value", past_key_value
-        )  # no need for this line in our case
 
-        if self.rotary_emb is not None:
-            cos, sin = self.rotary_emb(v)
-            q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            if past_key_value is not None:
-                cache_kwargs = {
-                    "sin": sin,
-                    "cos": cos,
-                }
-                k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
-        else:
-            if past_key_value is not None:
-                k, v = past_key_value.update(k, v, self.layer_idx)
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)
+
+        if use_cache:
+            cache = getattr(self, "cache", None)
+            if cache is None:
+                raise ValueError(
+                    "you need to setup cache for every attention layer with model.setup_cache()"
+                )
+            k, v = cache.update(k, v, start_pos)
 
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, is_causal=self.is_casual
+            query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
-        return out, past_key_value
+        return out
 
 
 class DecoderAttentionGqa(nn.Module):
@@ -242,7 +230,6 @@ class DecoderAttentionGqa(nn.Module):
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
             )
-        self.is_casual = True
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -258,7 +245,7 @@ class DecoderAttentionGqa(nn.Module):
             raise ValueError(
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.output = SelfOutput(config=config)
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
@@ -273,17 +260,14 @@ class DecoderAttentionGqa(nn.Module):
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
-            print("Using Rotatry Embedding")
 
     def forward(
         self,
         hidden_state: torch.Tensor,
-        attention_mask: torch.tensor,
-        past_key_value: Optional[object] = None,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
         q = self.q(hidden_state)
         k = self.k(hidden_state)
@@ -291,33 +275,26 @@ class DecoderAttentionGqa(nn.Module):
         q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
-        past_key_value = getattr(
-            self, "past_key_value", past_key_value
-        )  # no need for this line in our case
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)
 
-        if self.rotary_emb is not None:
-            cos, sin = self.rotary_emb(v)
-            q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            if past_key_value is not None:
-                cache_kwargs = {
-                    "sin": sin,
-                    "cos": cos,
-                }
-                k, v = past_key_value.update(k, v, self.layer_idx, cache_kwargs)
-        else:
-            if past_key_value is not None:
-                k, v = past_key_value.update(k, v, self.layer_idx)
+        if use_cache:
+            cache = getattr(self, "cache", None)
+            if cache is None:
+                raise ValueError(
+                    "you need to setup cache for every attention layer with model._setup_cache()"
+                )
+            k, v = cache.update(k, v, start_pos)
 
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
-        # if attention_mask is not None:
-        #     causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
+
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, is_causal=self.is_casual
+            query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
-        return out, past_key_value
+        return out
 
 
 class EncoderDecoderAttention(nn.Module):
@@ -329,7 +306,7 @@ class EncoderDecoderAttention(nn.Module):
                 f"heads ({config.num_attention_heads})"
             )
         self.head_size = int(config.hidden_size // config.num_attention_heads)
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
         self.q = nn.Linear(
@@ -357,62 +334,50 @@ class EncoderDecoderAttention(nn.Module):
         hidden_state: torch.Tensor,
         key_value_states: torch.Tensor,
         attention_mask: torch.Tensor,
-        past_key_value: Optional[object] = None,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> Tuple[torch.Tensor, object]:
         q = self.q(hidden_state)
 
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        past_key_value = getattr(
-            self, "past_key_value", past_key_value
-        )  # no need for this line in our case
-        if (
-            past_key_value is None or len(past_key_value) == 0
-        ):  # train or 0 len of past_key_value
+
+        if use_cache == False:  # train
             k = self.k(key_value_states)
             v = self.v(key_value_states)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            if self.rotary_emb is not None:
-                cos, sin = self.rotary_emb(v)
-                q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            if past_key_value is not None and len(past_key_value) == 0:
-                k, v = past_key_value.update(
+            if freqs is not None:
+                q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+
+        if use_cache == True:  # kv-cache is enable
+            cache = getattr(self, "cache", None)
+            if cache is None:
+                raise ValueError(
+                    "use_cache is True please enable model._setup_cache() to use kv-cache"
+                )
+            if (
+                cache is not None and len(cache) == 0
+            ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
+                k = self.k(key_value_states)
+                v = self.v(key_value_states)
+                k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+                v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+                if freqs is not None:
+                    q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+                k, v = self.cache.update(
                     k, v
                 )  # store it will be same for all iteration
-        else:
-            k, v = past_key_value.get()
+            elif cache is not None and len(cache) != 0:
 
-        # if self.rotary_emb is not None and past_key_value is None:  # first iteration with rope
-        #     k = self.k(key_value_states)
-        #     v = self.v(key_value_states)
-        #     k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #     v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #     cos, sin = self.rotary_emb(v)
-        #     q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-        #     if past_key_value is not None:
-        #         cache_kwargs = {
-        #             "sin": sin,
-        #             "cos": cos,
-        #         }
-        #         k, v = past_key_value.update(k, v, cache_kwargs)
-        # elif past_key_value is not None:  # first iteration
-        #     if len(past_key_value) == 0:
-        #         k = self.k(key_value_states)
-        #         v = self.v(key_value_states)
-        #         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #         k, v = past_key_value.update(
-        #             k, v
-        #         )  # store it will be same for all iteration
-        # else:  # already have past_key_value
-        #     k, v = past_key_value.get()
+                k, v = self.cache.get()
 
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
-        return out, past_key_value
+        return out
 
 
 class EncoderDecoderAttentionGqa(nn.Module):
@@ -439,7 +404,7 @@ class EncoderDecoderAttentionGqa(nn.Module):
             raise ValueError(
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
-        self.attention_bias = getattr(config, "attention_bias", False)
+        self.attention_bias = getattr(config, "attention_bias", True)
         self.output = SelfOutput(config=config)
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
@@ -465,54 +430,42 @@ class EncoderDecoderAttentionGqa(nn.Module):
         hidden_state: torch.Tensor,
         key_value_states: Optional[torch.Tensor],
         attention_mask: torch.tensor,
-        past_key_value: Optional[object] = None,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
         q = self.q(hidden_state)
 
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        past_key_value = getattr(
-            self, "past_key_value", past_key_value
-        )  # no need for this line in our case
-        if (
-            past_key_value is None or len(past_key_value) == 0
-        ):  # train or 0 len of past_key_value
+        if use_cache == False:  # train
             k = self.k(key_value_states)
             v = self.v(key_value_states)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            if self.rotary_emb is not None:
-                cos, sin = self.rotary_emb(v)
-                q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-            if past_key_value is not None and len(past_key_value) == 0:
-                k, v = past_key_value.update(
+            if freqs is not None:
+                q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+
+        if use_cache == True:  # kv-cache is enable
+            cache = getattr(self, "cache", None)
+            if cache is None:
+                raise ValueError(
+                    "use_cache is True please enable model._setup_cache() to use kv-cache"
+                )
+            if (
+                cache is not None and len(cache) == 0
+            ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
+                k = self.k(key_value_states)
+                v = self.v(key_value_states)
+                k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+                v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+                if freqs is not None:
+                    q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+                k, v = self.cache.update(
                     k, v
                 )  # store it will be same for all iteration
-        else:
-            k, v = past_key_value.get()
-        # if self.rotary_emb is not None:  # first iteration with rope
-        #     k = self.k(key_value_states)
-        #     v = self.v(key_value_states)
-        #     k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #     v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #     cos, sin = self.rotary_emb(v)
-        #     q, k = apply_rotary_pos_emb(q, k, cos, sin, None)
-        #     if past_key_value is not None and len(past_key_value)==0:
-        #         cache_kwargs = {
-        #             "sin": sin,
-        #             "cos": cos,
-        #         }
-        #         k, v = past_key_value.update(k, v, cache_kwargs)
-        # elif past_key_value is not None:  # first iteration
-        #     if len(past_key_value) == 0:
-        #         k = self.k(key_value_states)
-        #         v = self.v(key_value_states)
-        #         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-        #         k, v = past_key_value.update(
-        #             k, v
-        #         )  # store it will be same for all iteration
-        # else:  # already have past_key_value
-        #     k, v = past_key_value.get()
+            elif cache is not None and len(cache) != 0:
+
+                k, v = self.cache.get()
 
         k = repeat_kv(k, n_rep=self.num_key_value_groups)
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
@@ -521,4 +474,4 @@ class EncoderDecoderAttentionGqa(nn.Module):
         )
         out = rearrange(out, "b h l d -> b l (h d)")
         out = self.output(out, hidden_state)
-        return out, past_key_value
+        return out

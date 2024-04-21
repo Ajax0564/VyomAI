@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 class AbsoluteEncoding(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
-        self.position_embeddings = nn.Embedding(
+        self.pos_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size
         )
         self.register_buffer(
@@ -17,13 +17,12 @@ class AbsoluteEncoding(nn.Module):
         )
         self.max_size = config.max_position_embeddings
 
-    def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
-        size = hidden_state.size()[1]
+    def forward(self, size: int) -> torch.Tensor:
         if self.max_size < size:
             raise ValueError(
                 f"The hidden size ({size }) is more than the config max_position_embeddings {self.max_size}"
             )
-        return self.position_embeddings(self.position_ids[:, :size])
+        return self.pos_embeddings(self.position_ids[:, :size])
 
 
 class SinusoidalEncoding(nn.Module):
@@ -52,39 +51,9 @@ class SinusoidalEncoding(nn.Module):
             self.position.float() * self.div_term
         )
 
-    def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
-        batch_size, seq_len = hidden_state.size()  # b*l
+    def forward(self, seq_len: int) -> torch.Tensor:
 
-        return self.positional_encoding[:, :seq_len, :]
-
-
-class RelativePositionalEncoding(nn.Module):
-    """each element will contain information for all forward and backward element
-    it can be used inside  every attention layer can be bit expensive
-
-    """
-
-    def __init__(self, config):
-        super().__init__()
-        self.max_position = config.max_position_embeddings
-        self.embeddings_table = nn.Parameter(
-            torch.Tensor(self.max_position * 2 + 1, config.hidden_size)
-        )
-        nn.init.xavier_uniform_(self.embeddings_table)
-
-    def forward(self, q: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-        len_q = q.size()[1]
-        len_k = k.size()[1]
-        range_vec_q = torch.arange(len_q)
-        range_vec_k = torch.arange(len_k)
-        relative_matrix = range_vec_k[None, :] - range_vec_q[:, None]
-        clipped_relative_matrix = torch.clamp(
-            relative_matrix, -self.max_position, self.max_position
-        )
-        relative_position_matrix = clipped_relative_matrix + self.max_position
-        embeddings = self.embeddings_table[relative_position_matrix]
-
-        return embeddings
+        return self.positional_encoding[:, :seq_len]
 
 
 # copied from transformer/models/gemma
@@ -111,33 +80,21 @@ class RotaryEmbedding(nn.Module):
         )
 
     @torch.no_grad()
-    def forward(self, x, position_ids=None, seq_len=None):
+    def forward(self, seq_len: int = None):
         # x: [bs, num_attention_heads, seq_len, head_size]
-        size = x.size()[2]
-        position_ids = self.position_ids[:, :size].float()
-        # if self.inv_freq is None:
-        #     self.inv_freq = 1.0 / (
-        #         self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=x.device).float() / self.dim)
-        #     )
+        # size = x.size()[2]
+        position_ids = torch.arange(seq_len).unsqueeze(0)
+        # position_ids = self.position_ids[:, :size].float()
+
         inv_freq_expanded = (
             self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         )
         position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 since bfloat16 loses precision on long contexts
-        device_type = x.device.type
-        device_type = (
-            device_type
-            if isinstance(device_type, str) and device_type != "mps"
-            else "cpu"
+
+        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(
+            1, 2
         )
-        with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (
-                inv_freq_expanded.float() @ position_ids_expanded.float()
-            ).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos()
-            sin = emb.sin()
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+        return freqs
 
 
 # Copied from transformers.models.llama.modeling_llama.rotate_half
@@ -149,16 +106,16 @@ def rotate_half(x):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+def apply_rotary_pos_emb(
+    q, k, freqs, only_q: bool = False, unsqueeze_dim=1
+) -> Tuple[torch.Tensor]:
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
         q (`torch.Tensor`): The query tensor.
         k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`, *optional*):
-            Deprecated and unused.
+        freqs: precalculated frqs for sin cos
+        only_q: bool = False for encoder decoder
         unsqueeze_dim (`int`, *optional*, defaults to 1):
             The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
             sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
@@ -169,11 +126,19 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    emb = torch.cat((freqs, freqs), dim=-1)
+    cos = emb.cos()
+    sin = emb.sin()
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+    #     print(cos.size(),sin.size(),q.size(),k.size())
+    if only_q:
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+    else:
+
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+        return q_embed, k_embed
 
 
 # To do :  Alibi
