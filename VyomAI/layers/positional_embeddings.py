@@ -105,6 +105,11 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
+# def rotate_half(x):
+#     x1, x2 = x.chunk(2, dim=-1)
+#     return torch.cat((-x2, x1), dim=-1)
+
+
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
 def apply_rotary_pos_emb(
     q, k, freqs, only_q: bool = False, unsqueeze_dim=1

@@ -8,7 +8,7 @@ import time
 
 def masked_language_modeling(
     tokenizer, input_ids: torch.Tensor, ignore_index: int = -100
-) -> Tuple[torch.Tensor, ...]:
+) -> Tuple[torch.Tensor]:
     label = input_ids.clone()
     special_tokens_mask = torch.tensor(
         [
@@ -73,7 +73,7 @@ def electra(
     tokenizer,
     masked_indices: torch.Tensor,
     temperature: int = 3,
-) -> Tuple[torch.Tensor, ...]:
+) -> Tuple[torch.Tensor]:
     sample_logits = logits[masked_indices]  # get token index from MLM step
     sampled = sample(
         sample_logits, temperature=temperature
@@ -92,7 +92,7 @@ def electra(
     return discriminator_input, disc_labels, non_padded_indices
 
 
-class CasualLanguageModeling(Dataset):
+class LanguageModeling(Dataset):
 
     def __init__(self, tokenizer, file_path: str, block_size: int):
         if os.path.isfile(file_path) is False:

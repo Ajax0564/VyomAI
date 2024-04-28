@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from einops import rearrange, reduce, repeat
 from typing import Optional, Tuple
-from .ffn import SelfOutput
 from .positional_embeddings import apply_rotary_pos_emb, RotaryEmbedding
 
 
@@ -61,7 +60,9 @@ class EncoderAttention(nn.Module):
         self.v = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.num_attention_heads = config.num_attention_heads
 
     def forward(
@@ -85,7 +86,7 @@ class EncoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out
 
 
@@ -113,7 +114,9 @@ class EncoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
@@ -150,7 +153,7 @@ class EncoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out
 
 
@@ -175,7 +178,9 @@ class DecoderAttention(nn.Module):
         self.v = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.num_attention_heads = config.num_attention_heads
         self.rotary_emb = (
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
@@ -218,7 +223,7 @@ class DecoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out
 
 
@@ -246,7 +251,9 @@ class DecoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
@@ -293,7 +300,7 @@ class DecoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out
 
 
@@ -318,7 +325,9 @@ class EncoderDecoderAttention(nn.Module):
         self.v = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.num_attention_heads = config.num_attention_heads
         self.rotary_emb = (
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
@@ -376,7 +385,7 @@ class EncoderDecoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out
 
 
@@ -405,7 +414,9 @@ class EncoderDecoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.output = SelfOutput(config=config)
+        self.out = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
         self.q = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
@@ -473,5 +484,5 @@ class EncoderDecoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.output(out, hidden_state)
+        out = self.out(out)
         return out

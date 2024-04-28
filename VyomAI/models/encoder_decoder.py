@@ -135,7 +135,6 @@ class Seq2SeqDecoderModel(nn.Module):
         attention_mask: torch.Tensor,
         encoder_hidden_state: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[object] = None,
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:

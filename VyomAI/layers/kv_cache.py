@@ -108,7 +108,7 @@ class StaticCache:
     ) -> Tuple[torch.Tensor]:
         self._seen_tokens = True
         bsz, head, seqlen, _ = k.shape
-        assert bsz == 1
+        assert bsz == 1, "Only support batch size 1"
 
         self.key_cache = self.key_cache.to(k)
         self.value_cache = self.value_cache.to(v)

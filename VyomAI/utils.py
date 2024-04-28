@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Dict, Tuple, List, Optional
 import torch
 from tqdm import tqdm
+from dataclasses import dataclass
 
 
 def model_size(model: nn.Module) -> float:
@@ -85,47 +86,15 @@ def timing_cuda(
     return torch.mean.mean(latencies), max_memory  # time =  milisecond
 
 
-def generate(
-    model: nn.Module,
-    tokenize_text: torch.Tensor,
-    max_new_tokens: Optional[int] = 3,
-    temperature: Optional[float] = 1.0,
-    do_sample: Optional[bool] = False,
-    use_cache: Optional[bool] = False,
-) -> torch.Tensor:
-    """
-    Take a conditioning sequence of indices idx (LongTensor of shape (1,t)) and complete
-    the sequence max_new_tokens times, feeding the predictions back into the model each time.
-    Most likely you'll want to make sure to be in model.eval() mode of operation for this.
-    """
-    #     text = tokenizer(text, truncation=True, padding=True, return_tensors="pt")
-    idx = tokenize_text
-    idx_next = idx
-    index = 0
-    take = -1
-    #     for cur_pos in range(min_promp, total_len)
-    for _ in range(max_new_tokens):
-        if use_cache == False:
-            logits = model(input_ids=idx).logits
-        else:
-            logits = model(
-                input_ids=idx_next, start_pos=index, use_cache=use_cache
-            ).logits
-
-        if take != 0:
-            logits = logits[:, take, :] / temperature
-            if use_cache == True:
-                take = 0
-        else:
-            logits = logits[:, -1] / temperature
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        # either sample from the distribution or take the most likely element
-        if do_sample:
-            idx_next = torch.multinomial(probs, num_samples=1)
-        else:
-            _, idx_next = torch.topk(probs, k=1, dim=-1)
-
-        idx = torch.cat((idx, idx_next), dim=1)
-        index = idx.size()[1] - 1  # model already have idx-1 kv-cache stored
-
-    return idx
+@dataclass
+class Config:
+    hidden_size: int = 768
+    num_attention_heads: int = 12
+    max_position_embeddings: int = 514
+    num_hidden_layers: int = 4
+    vocab_size: int = 50265
+    hidden_dropout_prob: float = 0.1
+    initializer_range: float = 0.02
+    intermediate_size: int = 3072
+    layer_norm_eps: float = 1e-05
+    hidden_act: str = "gelu"
