@@ -119,6 +119,16 @@ class DecoderModel(nn.Module):
         )
         self.lm_head = LMHead(config=config)
 
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(
+                module.weight, mean=0.0, std=0.02 / torch.sqrt(2 * len(self.all_layer))
+            )
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(
+                module.weight, mean=0.0, std=0.02 / torch.sqrt(2 * len(self.all_layer))
+            )
+
     def forward(
         self,
         input_ids: torch.Tensor,
