@@ -123,6 +123,7 @@ class EncoderModel(nn.Module):
             freqs = self.emb_freq[:, :seqlen].to(input_ids.device)
 
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2).type_as(hidden_state)
+        attention_mask = (1.0 - attention_mask) * torch.finfo(hidden_state.dtype).min
 
         for layer in self.all_layer:
             hidden_state = layer(hidden_state, attention_mask, freqs)

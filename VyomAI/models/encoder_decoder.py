@@ -223,9 +223,13 @@ class EncoderDecoderModel(nn.Module):
             encoder_output = self.encoder(
                 input_ids=input_ids, attention_mask=attention_mask
             ).logits
+
         encoder_attention_mask = (
             attention_mask.unsqueeze(1).unsqueeze(2).type_as(encoder_output)
         )
+        encoder_attention_mask = (1.0 - encoder_attention_mask) * torch.finfo(
+            encoder_output.dtype
+        ).min
 
         decoder_output = self.decoder(
             input_ids=decoder_input_ids,

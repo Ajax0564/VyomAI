@@ -24,7 +24,8 @@ def generate(
     #     for cur_pos in range(min_promp, total_len)
     for _ in range(max_new_tokens):
         if use_cache == False:
-            logits = model(input_ids=idx).logits
+            with torch.no_grad():
+                logits = model(input_ids=idx).logits
         else:
             with torch.no_grad():
                 logits = model(
@@ -55,11 +56,11 @@ def generate_seq2seq(
     encoder_output: torch.Tensor,
     encoder_attention_mask: torch.Tensor,
     decoder_start: torch.Tensor,
-    max_new_tokens=5,
-    temperature=1.0,
-    do_sample=False,
-    top_k=10,
-    use_cache=False,
+    max_new_tokens: Optional[int] = 5,
+    temperature: Optional[float] = 1.0,
+    do_sample: Optional[bool] = False,
+    top_k: Optional[int] = 10,
+    use_cache: Optional[bool] = False,
 ) -> torch.Tensor:
     """
 

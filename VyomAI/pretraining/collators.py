@@ -7,25 +7,32 @@ import time
 
 
 def masked_language_modeling(
-    tokenizer, input_ids: torch.Tensor, ignore_index: int = -100
+    input_ids: torch.Tensor,
+    tokenizer,
+    fraction: Optional[float] = 0.15,
+    ignore_index: Optional[int] = -100,
 ) -> Tuple[torch.Tensor]:
     label = input_ids.clone()
+    input_ids = input_ids.clone()
+
     special_tokens_mask = torch.tensor(
         [
             tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True)
             for val in label.tolist()
         ],
         dtype=torch.bool,
+    ).to(
+        label.device
     )  # get all special token mask to ignore their selection in MLM
-    probability_matrix = torch.full(
-        label.shape, 0.15
+    probability_matrix = torch.full(label.shape, fraction).to(
+        label.device
     )  # gen probability matrix to select 15% tokens for MLM
     probability_matrix.masked_fill_(
         special_tokens_mask, value=0.0
     )  # zero out the probability of special tokens so that they do not get selected
     # https://pytorch.org/docs/stable/generated/torch.bernoulli.html
     # Draws binary random numbers (0 or 1) from a Bernoulli distribution.
-    masked_indices = torch.bernoulli(probability_matrix).bool()
+    masked_indices = torch.bernoulli(probability_matrix).bool().to(label.device)
 
     label[~masked_indices] = (
         ignore_index  # We only compute loss on masked tokens cross entropy ignore_index
@@ -33,7 +40,8 @@ def masked_language_modeling(
 
     # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
     indices_replaced = (
-        torch.bernoulli(torch.full(label.shape, 0.8)).bool() & masked_indices
+        torch.bernoulli(torch.full(label.shape, 0.8)).bool().to(label.device)
+        & masked_indices
     )  # rondomly select 80% tokens from 15% token
     input_ids[indices_replaced] = tokenizer.convert_tokens_to_ids(
         tokenizer.mask_token
@@ -41,12 +49,12 @@ def masked_language_modeling(
 
     # 10% of the time, we replace masked input tokens with random word
     indices_random = (
-        torch.bernoulli(torch.full(label.shape, 0.5)).bool()
+        torch.bernoulli(torch.full(label.shape, 0.5)).bool().to(label.device)
         & masked_indices
         & ~indices_replaced
     )  # from 15% ignore 80% select 10% from 20%
-    random_words = torch.randint(
-        len(tokenizer), label.shape, dtype=torch.long
+    random_words = torch.randint(len(tokenizer), label.shape, dtype=torch.long).to(
+        label.device
     )  # get random token index from tokenizer
     input_ids[indices_random] = random_words[indices_random]
 
@@ -88,6 +96,8 @@ def electra(
     # get discriminator predictions of replaced / original
     non_padded_indices = torch.nonzero(
         input_ids != tokenizer.pad_token_id, as_tuple=True
+    ).to(
+        logits.device
     )  # needed to caluclate loss only non [PAD]  tokens
     return discriminator_input, disc_labels, non_padded_indices
 

@@ -3,10 +3,13 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
+from typing import Optional, Tuple
 
 
 class LoRALinear(nn.Module):
-    def __init__(self, linear_layer, rank, alpha, lora_dropout=0.0) -> None:
+    def __init__(
+        self, linear_layer, rank, alpha, lora_dropout: Optional[float] = 0.0
+    ) -> None:
         super().__init__()
         self.in_features = linear_layer.in_features
         self.out_features = linear_layer.out_features

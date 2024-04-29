@@ -45,7 +45,7 @@ def timing_cuda(
     num_batches: int,
     input_ids: torch.Tensor,
     masks: torch.Tensor,
-    is_decoder: bool = False,
+    is_decoder: Optional[bool] = False,
     generation_config=None,
     device: str = "cuda",
 ) -> Tuple[float, float]:
