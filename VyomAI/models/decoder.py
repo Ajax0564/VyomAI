@@ -150,17 +150,10 @@ class DecoderModel(nn.Module):
             )
         mask = None
         if seqlen > 1:
-            mask = torch.full((seqlen, seqlen), float("-inf"), device=input_ids.device)
-
-            mask = torch.triu(mask, diagonal=1)
-
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=input_ids.device), mask]
-            ).type_as(hidden_state)
+            mask = self.create_mask_for_decoder(
+                input_ids=input_ids, attention_mask=attention_mask, start_pos=start_pos
+            )
+            mask = (1.0 - mask) * torch.finfo(hidden_state.dtype).min
 
         for layer in self.all_layer:
             hidden_state = layer(
@@ -172,6 +165,44 @@ class DecoderModel(nn.Module):
             )
         logits = self.lm_head(hidden_state)
         return CLMOutput(hidden_state=hidden_state, logits=logits)
+
+    def create_mask_for_decoder(
+        self,
+        input_ids,
+        attention_mask: Optional[torch.Tensor] = None,
+        start_pos: Optional[int] = 0,
+    ) -> torch.Tensor:
+        device = input_ids.device
+        batch_size, seq_length = input_ids.shape
+        if attention_mask is None:
+            attention_mask = (
+                torch.ones(seq_length + start_pos).repeat(batch_size, 1).to(device)
+            )
+        seq_ids = torch.arange(seq_length).to(device)
+        causal_mask = (
+            seq_ids[None, None, :].repeat(batch_size, seq_length, 1)
+            <= seq_ids[None, :, None]
+        )  # 1x1xl repeat bxlxl compare to 1xlx1
+
+        causal_mask = causal_mask.to(attention_mask.dtype)
+
+        if start_pos > 0:  # correct the attention mask  for kv-cache operation
+            causal_mask = torch.cat(
+                [
+                    torch.ones(
+                        (batch_size, seq_length, start_pos),
+                        device=device,
+                        dtype=causal_mask.dtype,
+                    ),
+                    causal_mask,
+                ],
+                axis=-1,
+            )
+
+        extended_attention_mask = (
+            causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
+        )  # this is mainly if batch contains <PAD> tokens.
+        return extended_attention_mask
 
     @classmethod
     def from_config(

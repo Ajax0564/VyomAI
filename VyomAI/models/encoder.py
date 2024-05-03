@@ -132,6 +132,11 @@ class EncoderModel(nn.Module):
         else:
             freqs = self.emb_freq[:, :seqlen].to(input_ids.device)
 
+        if attention_mask is None:
+            encoder_batch_size, encoder_sequence_length = input_ids.size()
+            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            attention_mask = torch.ones(encoder_hidden_shape, device=input_ids.device)
+
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2).type_as(hidden_state)
         attention_mask = (1.0 - attention_mask) * torch.finfo(hidden_state.dtype).min
 
