@@ -15,7 +15,7 @@ from dataclasses import dataclass
 _position_embeddings = {
     "absolute": AbsoluteEncoding,
     "sinusoidal": SinusoidalEncoding,
-}  #'relative':RelativePositionalEncoding
+}
 
 
 @dataclass
@@ -153,7 +153,9 @@ class DecoderModel(nn.Module):
             mask = self.create_mask_for_decoder(
                 input_ids=input_ids, attention_mask=attention_mask, start_pos=start_pos
             )
-            mask = (1.0 - mask) * torch.finfo(hidden_state.dtype).min
+            mask = (1.0 - mask) * torch.finfo(
+                hidden_state.dtype
+            ).min  # invert it to to add directly to attention score
 
         for layer in self.all_layer:
             hidden_state = layer(
@@ -201,7 +203,7 @@ class DecoderModel(nn.Module):
 
         extended_attention_mask = (
             causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
-        )  # this is mainly if batch contains <PAD> tokens.
+        )  # # this is mainly if batch contains <PAD> tokens. stop casual procees before <PAD>
         return extended_attention_mask
 
     @classmethod

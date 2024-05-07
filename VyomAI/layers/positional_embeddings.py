@@ -8,7 +8,9 @@ class AbsoluteEncoding(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.pos_embeddings = nn.Embedding(
-            config.max_position_embeddings, config.hidden_size
+            config.max_position_embeddings,
+            config.hidden_size,
+            padding_idx=getattr(config, "pad_token_id", None),
         )
         self.register_buffer(
             "position_ids",

@@ -39,6 +39,28 @@ def repeat_kv_einops(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
+class AttentionSelfOutput(nn.Module):
+    def __init__(
+        self, config, bias: Optional[bool] = True, out_features: Optional[int] = None
+    ):
+        super().__init__()
+        self.dense = nn.Linear(
+            config.hidden_size,
+            config.hidden_size if out_features is None else out_features,
+            bias=bias,
+        )
+        self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(
+        self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.layernorm(hidden_states + input_tensor)
+        return hidden_states
+
+
 class EncoderAttention(nn.Module):
     def __init__(self, config, layer_idx: int) -> None:
         super().__init__()
@@ -51,18 +73,16 @@ class EncoderAttention(nn.Module):
         self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
-        self.q = nn.Linear(
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.out = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
         self.num_attention_heads = config.num_attention_heads
 
     def forward(
@@ -71,9 +91,9 @@ class EncoderAttention(nn.Module):
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        q = self.q(hidden_state)
-        k = self.k(hidden_state)
-        v = self.v(hidden_state)
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
         # q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
         # place holder for RoPe operation
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
@@ -86,8 +106,7 @@ class EncoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+        return self.out(out, hidden_state)
 
 
 class EncoderAttentionGqa(nn.Module):
@@ -114,18 +133,16 @@ class EncoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.out = nn.Linear(
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.q = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
@@ -137,9 +154,9 @@ class EncoderAttentionGqa(nn.Module):
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        q = self.q(hidden_state)
-        k = self.k(hidden_state)
-        v = self.v(hidden_state)
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
         q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
@@ -153,8 +170,8 @@ class EncoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+
+        return self.out(out, hidden_state)
 
 
 class DecoderAttention(nn.Module):
@@ -169,18 +186,16 @@ class DecoderAttention(nn.Module):
         self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
-        self.q = nn.Linear(
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.out = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
         self.num_attention_heads = config.num_attention_heads
         self.rotary_emb = (
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
@@ -199,9 +214,9 @@ class DecoderAttention(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> Tuple[torch.Tensor, object]:
-        q = self.q(hidden_state)
-        k = self.k(hidden_state)
-        v = self.v(hidden_state)
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
         # q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
         # place holder for RoPe operation
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
@@ -223,8 +238,8 @@ class DecoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+
+        return self.out(out, hidden_state)
 
 
 class DecoderAttentionGqa(nn.Module):
@@ -251,18 +266,16 @@ class DecoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.out = nn.Linear(
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.q = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
@@ -276,9 +289,9 @@ class DecoderAttentionGqa(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
-        q = self.q(hidden_state)
-        k = self.k(hidden_state)
-        v = self.v(hidden_state)
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
         q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
@@ -300,8 +313,8 @@ class DecoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+
+        return self.out(out, hidden_state)
 
 
 class EncoderDecoderAttention(nn.Module):
@@ -316,18 +329,16 @@ class EncoderDecoderAttention(nn.Module):
         self.attention_bias = getattr(config, "attention_bias", True)
         self.layer_idx = layer_idx
         # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
-        self.q = nn.Linear(
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.out = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
         self.num_attention_heads = config.num_attention_heads
         self.rotary_emb = (
             RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
@@ -347,13 +358,13 @@ class EncoderDecoderAttention(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> Tuple[torch.Tensor, object]:
-        q = self.q(hidden_state)
+        q = self.query(hidden_state)
 
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
 
         if use_cache == False:  # train
-            k = self.k(key_value_states)
-            v = self.v(key_value_states)
+            k = self.key(key_value_states)
+            v = self.value(key_value_states)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
             if freqs is not None:
@@ -368,8 +379,8 @@ class EncoderDecoderAttention(nn.Module):
             if (
                 cache is not None and len(cache) == 0
             ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
-                k = self.k(key_value_states)
-                v = self.v(key_value_states)
+                k = self.key(key_value_states)
+                v = self.value(key_value_states)
                 k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
                 v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
                 if freqs is not None:
@@ -385,8 +396,8 @@ class EncoderDecoderAttention(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+
+        return self.out(out, hidden_state)
 
 
 class EncoderDecoderAttentionGqa(nn.Module):
@@ -414,18 +425,16 @@ class EncoderDecoderAttentionGqa(nn.Module):
                 f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
             )
         self.attention_bias = getattr(config, "attention_bias", True)
-        self.out = nn.Linear(
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.query = nn.Linear(
             config.hidden_size, config.hidden_size, bias=self.attention_bias
         )
-        self.q = nn.Linear(
-            config.hidden_size, config.hidden_size, bias=self.attention_bias
-        )
-        self.k = nn.Linear(
+        self.key = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.v = nn.Linear(
+        self.value = nn.Linear(
             config.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
@@ -445,12 +454,12 @@ class EncoderDecoderAttentionGqa(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
-        q = self.q(hidden_state)
+        q = self.query(hidden_state)
 
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         if use_cache == False:  # train
-            k = self.k(key_value_states)
-            v = self.v(key_value_states)
+            k = self.key(key_value_states)
+            v = self.value(key_value_states)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
             if freqs is not None:
@@ -465,8 +474,8 @@ class EncoderDecoderAttentionGqa(nn.Module):
             if (
                 cache is not None and len(cache) == 0
             ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
-                k = self.k(key_value_states)
-                v = self.v(key_value_states)
+                k = self.key(key_value_states)
+                v = self.value(key_value_states)
                 k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
                 v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
                 if freqs is not None:
@@ -484,5 +493,5 @@ class EncoderDecoderAttentionGqa(nn.Module):
             query=q, key=k, value=v, attn_mask=attention_mask
         )
         out = rearrange(out, "b h l d -> b l (h d)")
-        out = self.out(out)
-        return out
+
+        return self.out(out, hidden_state)

@@ -59,7 +59,7 @@ class LMHead(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -68,7 +68,7 @@ class LMHead(nn.Module):
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         x = self.dense(hidden_state)
         x = nn.GELU()(x)
-        x = self.layer_norm(x)
+        x = self.layerNorm(x)
 
         # project back to size of vocabulary with bias
         x = self.decoder(x)
@@ -138,7 +138,9 @@ class EncoderModel(nn.Module):
             attention_mask = torch.ones(encoder_hidden_shape, device=input_ids.device)
 
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2).type_as(hidden_state)
-        attention_mask = (1.0 - attention_mask) * torch.finfo(hidden_state.dtype).min
+        attention_mask = (1.0 - attention_mask) * torch.finfo(
+            hidden_state.dtype
+        ).min  # invert it to to add directly to attention score
 
         for layer in self.all_layer:
             hidden_state = layer(hidden_state, attention_mask, freqs)

@@ -26,8 +26,8 @@ _position_embeddings = {
 
 @dataclass
 class Seq2SeqOutput(object):
-    key_value_states: torch.Tensor
     logits: torch.Tensor
+    key_value_states: torch.Tensor
 
 
 class Seq2SeqDecoderLayer(nn.Module):
@@ -81,7 +81,7 @@ class LMHead(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
         self.vocab = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -90,7 +90,7 @@ class LMHead(nn.Module):
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         x = self.dense(hidden_state)
         x = nn.GELU()(x)
-        x = self.layer_norm(x)
+        x = self.layerNorm(x)
 
         # project back to size of vocabulary with bias
         x = self.vocab(x)
@@ -165,7 +165,9 @@ class Seq2SeqDecoderModel(nn.Module):
             mask = self.create_mask_for_decoder(
                 input_ids=input_ids, attention_mask=attention_mask, start_pos=start_pos
             )
-            mask = (1.0 - mask) * torch.finfo(hidden_state.dtype).min
+            mask = (1.0 - mask) * torch.finfo(
+                hidden_state.dtype
+            ).min  # invert it to to add directly to attention score
 
         for layer in self.all_layer:
             hidden_state = layer(
@@ -213,7 +215,7 @@ class Seq2SeqDecoderModel(nn.Module):
 
         extended_attention_mask = (
             causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
-        )  # this is mainly if batch contains <PAD> tokens.
+        )  # this is mainly if batch contains <PAD> tokens. stop casual procees before <PAD>
         return extended_attention_mask
 
     @classmethod
@@ -271,7 +273,7 @@ class EncoderDecoderModel(nn.Module):
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             attention_mask = torch.ones(
                 encoder_hidden_shape, device=encoder_output.device
-            )
+            ).to(encoder_output.device)
 
         encoder_attention_mask = (
             attention_mask.unsqueeze(1).unsqueeze(2).type_as(encoder_output)

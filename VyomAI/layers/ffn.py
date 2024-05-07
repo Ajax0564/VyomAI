@@ -4,22 +4,6 @@ from einops import rearrange, reduce
 from typing import Optional, Tuple, Union
 
 
-class SelfOutput(nn.Module):
-    def __init__(self, config) -> None:
-        super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-    def forward(
-        self, hidden_state: torch.Tensor, input_tensor: torch.Tensor
-    ) -> torch.Tensor:
-        hidden_state = self.dense(hidden_state)
-        hidden_state = self.dropout(hidden_state)
-        hidden_state = self.layerNorm(hidden_state + input_tensor)
-        return hidden_state
-
-
 _ACT_ = {
     "gelu": nn.GELU(),
     "leaky_relu": nn.LeakyReLU(),
@@ -38,7 +22,7 @@ class FeedForward(nn.Module):
             config.hidden_size, int(multiplier) * config.hidden_size
         )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         if _ACT_.get(getattr(config, "hidden_act", None), None):
             self.act_fn = _ACT_[config.hidden_act]
         else:
@@ -52,5 +36,5 @@ class FeedForward(nn.Module):
         output = self.act_fn(output)
         output = self.out(output)
         output = self.dropout(output)
-        output = self.layerNorm(output + input_tensor)
+        output = self.layernorm(output + input_tensor)
         return output
