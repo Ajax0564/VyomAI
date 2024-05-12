@@ -28,6 +28,8 @@ class MLMOutput(object):
 
 
 class EncoderLayer(nn.Module):
+    "encoder layer for encoder model"
+
     def __init__(self, config, layer_idx: int, attention_type: str = None) -> None:
         super().__init__()
         self.attention = (
@@ -46,6 +48,15 @@ class EncoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         freqs: torch.Tensor = None,
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_state: torch.Tensor of shape (batch, seq_len,embd_dim)
+            attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen)
+            freqs: positionl information to use in RoPE
+        return:
+               hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
+
+        """
         out = self.attention(
             hidden_state=hidden_state, attention_mask=attention_mask, freqs=freqs
         )
@@ -59,7 +70,9 @@ class LMHead(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layer_norm = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-6)
+        )
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -68,7 +81,7 @@ class LMHead(nn.Module):
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         x = self.dense(hidden_state)
         x = nn.GELU()(x)
-        x = self.layerNorm(x)
+        x = self.layer_norm(x)
 
         # project back to size of vocabulary with bias
         x = self.decoder(x)
@@ -121,6 +134,14 @@ class EncoderModel(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`
+            attention_mask: torch.Tensor of shape (batch,seqlen) for encoder
+        return:
+               logits: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
+
+        """
         bsz, seqlen = input_ids.shape
         hidden_state = self.word_embeddings(input_ids)
         freqs = None
@@ -173,6 +194,15 @@ class EncoderForMaskedLM(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`
+            attention_mask: torch.Tensor of shape (batch,seqlen) for encoder
+        return:
+               hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
+               logits: torch.Tensor of shape (batch,seqlen, vocab_size)
+
+        """
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         logits = self.lm_head(out.logits)
         return MLMOutput(hidden_state=out.logits, logits=logits)

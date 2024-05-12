@@ -85,8 +85,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
     def test_absolute_gqa(self, get_input, config, all_types):
         input_ids, attention_mask = get_input
@@ -95,8 +95,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
     def test_sinusoidal_none(self, get_input, config, all_types):
         input_ids, attention_mask = get_input
@@ -104,8 +104,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
     def test_sinusoidal_gqa(self, get_input, config, all_types):
         input_ids, attention_mask = get_input
@@ -114,8 +114,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
     def test_rope_none(self, get_input, config, all_types):
         input_ids, attention_mask = get_input
@@ -123,7 +123,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
     def test_rope_gqa(self, get_input, config, all_types):
         input_ids, attention_mask = get_input
@@ -132,7 +133,8 @@ class TestDecoderCLM(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
+        with torch.no_grad():
+            assert list(model(input_ids, attention_mask).logits.shape) == [3, 17, 50265]
 
 
 class TestDecoderKVCache(object):

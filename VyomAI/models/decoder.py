@@ -1,4 +1,4 @@
-# GPT style model Casual language modeling
+# GPT style model for  Casual language modeling
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
@@ -31,8 +31,11 @@ class CLMOutput(object):
 
 
 class DecoderLayer(nn.Module):
+    "decoder layer for decoder model"
 
-    def __init__(self, config, layer_idx: int, attention_type: str = None) -> None:
+    def __init__(
+        self, config, layer_idx: int, attention_type: Optional[str] = None
+    ) -> None:
         super().__init__()
         self.attention = (
             DecoderAttentionGqa(config, layer_idx=layer_idx)
@@ -52,6 +55,16 @@ class DecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_state: torch.Tensor of shape (batch, seq_len,embd_dim)
+            attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen)
+            freqs:Optional positionl information to use in RoPE
+            start_pos: optional False  seq_no for kv-cache
+        return:
+               hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
+
+        """
         out = self.attention(
             hidden_state=hidden_state,
             attention_mask=attention_mask,
@@ -64,12 +77,14 @@ class DecoderLayer(nn.Module):
 
 
 class LMHead(nn.Module):
-    """Head for masked language modelling"""
+    """Head for language modelling"""
 
     def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layer_norm = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-6)
+        )
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -87,14 +102,16 @@ class LMHead(nn.Module):
 
 
 class DecoderModel(nn.Module):
+    "Decoder model for language modeling"
 
     def __init__(
         self,
         config,
         pos_embedding_type: Optional[str] = "absolute",
-        attention_type: str = None,
+        attention_type: Optional[str] = None,
     ) -> None:
         super().__init__()
+        self.is_gqa = True if attention_type == "gqa" else False
         self.word_embeddings = nn.Embedding(
             config.vocab_size,
             config.hidden_size,
@@ -109,7 +126,7 @@ class DecoderModel(nn.Module):
         if pos_embedding_type == "rope":
             self.emb_freq = RotaryEmbedding(config)(config.max_position_embeddings)
             print(
-                "Encoder Ignoring sinusoidal or absolute position embeddings because rope,is enable"
+                "Decoder Ignoring sinusoidal or absolute position embeddings because rope,is enable"
             )
         self.all_layer = nn.ModuleList(
             [
@@ -136,6 +153,17 @@ class DecoderModel(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`
+            attention_mask: torch.Tensor of shape (batch,seqlen) for encoder
+            use_cache: Optional False to enable kv-cache for generation
+            start:pos: Optional 0, use it in case of kv-cache
+        return:
+               hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
+               logits: torch.Tensor of shape (batch,seqlen, vocab_size)
+
+        """
         _bsz, seqlen = input_ids.shape
         hidden_state = self.word_embeddings(input_ids)
         freqs = None
@@ -174,6 +202,13 @@ class DecoderModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`
+            attention_mask: torch.Tensor of shape (batch,seqlen) for encoder
+        return:
+               attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen) for encoder
+        """
         device = input_ids.device
         batch_size, seq_length = input_ids.shape
         if attention_mask is None:
@@ -216,9 +251,11 @@ class DecoderModel(nn.Module):
         return cls(config, pos_embedding_type, attention_type)
 
     def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
+        """setup kv-cache hooks for every self-attention layer"""
         for layer in self.all_layer:
-            layer.attention.cache = cls(config)
+            layer.attention.cache = cls(config, is_gqa=self.is_gqa)
 
     def _clean_cache(self) -> None:
+        """destroy kv-cache hooks for every self-attention layer"""
         for layer in self.all_layer:
             layer.attention.cache = None

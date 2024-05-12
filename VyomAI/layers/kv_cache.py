@@ -10,45 +10,42 @@ import torch
 
 class DynamicCache:
     """
-    A cache that grows dynamically as more tokens are generated. This is the default for generative models.
+    A cache that grows dynamically as more tokens are generated.
 
     It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
     `[batch_size, num_heads, seq_len, head_dim]`.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, is_gqa: Optional[bool] = False) -> None:
         self.key_cache: torch.Tensor = None
         self.value_cache: torch.Tensor = None
         self._seen_tokens = False
 
     def __len__(self) -> int:
+        """This value corresponds
+        to the number generated tokens so for
+
+        """
         if self.key_cache is None:
             return 0
-        """
-        Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
-        to the number of layers in the model.
-        """
-        return self.key_cache.shape[-2]
+
+        return self.key_cache.shape[2]
 
     def update(
         self, key_states: torch.Tensor, value_states: torch.Tensor, start_pos: int = 0
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+         Updates the cache with the new `key_states` and `value_states` for the layer.
 
         Parameters:
-            key_states (`torch.Tensor`):
+            key_states: torch.Tensor
                 The new key states to cache.
-            value_states (`torch.Tensor`):
+            value_states: torch.Tensor
                 The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
-            cache_kwargs (`Dict[str, Any]`, `optional`):
-                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+            start_pos: int to return k,v value at specific position when kv-cache enable
 
         Return:
-            A tuple containing the updated key and value states.
-        """
+        A tuple containing the updated key and value states."""
 
         # Update the cache first iteration
         if self.key_cache is None:
@@ -62,6 +59,9 @@ class DynamicCache:
         return self.key_cache, self.value_cache
 
     def get(self) -> Tuple[torch.Tensor]:
+        """Return:
+        A tuple containing the updated key and value states."""
+
         if self._seen_tokens:
             return self.key_cache, self.value_cache
         else:
@@ -71,7 +71,7 @@ class DynamicCache:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
         if self.key_cache is None:
             return 0
-        return self.key_cache.shape[-2]
+        return self.key_cache.shape[2]
 
     def get_max_length(self) -> Optional[int]:
         """Returns the maximum sequence length of the cached states. DynamicCache does not have a maximum length."""
@@ -86,9 +86,18 @@ class StaticCache:
     `[batch_size, num_heads, seq_len, head_dim]`.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, is_gqa: Optional[bool] = False) -> None:
         self.head_size = int(config.hidden_size // config.num_attention_heads)
-        self.heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
+        self.heads = None
+        if is_gqa:
+            self.heads = getattr(config, "num_key_value_heads", None)
+            if self.heads is None:
+                raise ValueError(
+                    "you are using is_gqa=True and config.num_key_value_heads is not available"
+                )
+        if self.heads is None:
+
+            self.heads = config.num_attention_heads
         self.key_cache: torch.Tensor = torch.zeros(
             1,
             self.heads,
@@ -106,8 +115,25 @@ class StaticCache:
     def update(
         self, k: torch.Tensor, v: torch.Tensor, start_pos: int = 0
     ) -> Tuple[torch.Tensor]:
+        """
+         Updates the cache with the new `key_states` and `value_states` for the layer.
+
+        Parameters:
+            key_states: torch.Tensor
+                The new key states to cache.
+            value_states: torch.Tensor
+                The new value states to cache.
+            start_pos: int to return k,v value at specific position when kv-cache enable
+
+        Return:
+        A tuple containing the updated key and value states."""
         self._seen_tokens = True
         bsz, head, seqlen, _ = k.shape
+        self.first_update_len = seqlen
+        if seqlen > self.key_cache.size()[2]:
+            raise ValueError(
+                f"{k.shape} is more than init k_cache size {self.key_cache}"
+            )
         assert bsz == 1, "Only support batch size 1"
 
         self.key_cache = self.key_cache.to(k)
@@ -122,16 +148,21 @@ class StaticCache:
         return k, v
 
     def get(self) -> Tuple[torch.Tensor]:
+        """
+        Return:
+        A tuple containing the updated key and value states."""
         if self._seen_tokens:
-            return self.key_cache, self.value_cache
+            k = self.key_cache[:, :, : self.first_update_len]
+            v = self.value_cache[:, :, : self.first_update_len]
+
+            return k, v
         else:
             raise ValueError("there is no token available in kv-cache")
 
     def __len__(self) -> int:
         if self._seen_tokens == False:
             return 0
-        """
-        Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
-        to the number of layers in the model.
+        """ This value corresponds
+        to the number generated tokens so for
         """
         return self.key_cache.shape[2]

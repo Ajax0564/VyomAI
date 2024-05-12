@@ -31,7 +31,11 @@ class Seq2SeqOutput(object):
 
 
 class Seq2SeqDecoderLayer(nn.Module):
-    def __init__(self, config, layer_idx: int = 0, attention_type: str = None) -> None:
+    "decoder layer for Seq2Seq model"
+
+    def __init__(
+        self, config, layer_idx: Optional[int] = 0, attention_type: Optional[str] = None
+    ) -> None:
         super().__init__()
         self.attention = (
             DecoderAttentionGqa(config, layer_idx=layer_idx)
@@ -56,19 +60,23 @@ class Seq2SeqDecoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         encoder_hidden_state: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
         out = self.attention(
             hidden_state=hidden_state,
             attention_mask=attention_mask,
+            freqs=freqs,
             use_cache=use_cache,
             start_pos=start_pos,
         )
         out = self.cross_attention(
             hidden_state=out,
-            key_value_states=encoder_hidden_state,
-            attention_mask=encoder_attention_mask,
+            encoder_hidden_state=encoder_hidden_state,
+            encoder_attention_mask=encoder_attention_mask,
+            freqs=freqs,
+            use_cache=use_cache,
         )
 
         out = self.feed_forward(out, out)
@@ -76,12 +84,14 @@ class Seq2SeqDecoderLayer(nn.Module):
 
 
 class LMHead(nn.Module):
-    """Head for masked language modelling"""
+    """Head for language modelling"""
 
     def __init__(self, config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.layerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layer_norm = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-6)
+        )
 
         self.vocab = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -90,7 +100,7 @@ class LMHead(nn.Module):
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         x = self.dense(hidden_state)
         x = nn.GELU()(x)
-        x = self.layerNorm(x)
+        x = self.layer_norm(x)
 
         # project back to size of vocabulary with bias
         x = self.vocab(x)
@@ -99,11 +109,13 @@ class LMHead(nn.Module):
 
 
 class Seq2SeqDecoderModel(nn.Module):
+    """Seq2Seq decoder model"""
+
     def __init__(
         self,
         config,
         pos_embedding_type: Optional[str] = "absolute",
-        attention_type: str = None,
+        attention_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.word_embeddings = nn.Embedding(
@@ -120,11 +132,11 @@ class Seq2SeqDecoderModel(nn.Module):
         if pos_embedding_type == "rope":
             self.emb_freq = RotaryEmbedding(config)(config.max_position_embeddings)
             print(
-                "Encoder Ignoring sinusoidal or absolute position embeddings because rope,is enable"
+                "Decoder Ignoring sinusoidal or absolute position embeddings because rope,is enable"
             )
         self.all_layer = nn.ModuleList(
             [
-                Seq2SeqDecoderLayer(config, layer_idx)
+                Seq2SeqDecoderLayer(config, layer_idx, attention_type=attention_type)
                 for layer_idx in range(config.num_hidden_layers)
             ]
         )
@@ -148,18 +160,33 @@ class Seq2SeqDecoderModel(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for decoder`
+            attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen) for decoder
+            encoder_hidden_state:Optional torch.Tensor of shape (batch,seqlen, dim) from encoder
+            encoder_attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen) for encoder
+            use_cache: Optional False to enable kv-cache for generation
+            start:pos: Optional 0, use it in case of kv-cache
+        return:
+               hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
         _bsz, seqlen = input_ids.shape
         hidden_state = self.word_embeddings(input_ids)
         freqs = None
         if self.position_embeddings is not None:
             pos_info = pos_info = self.position_embeddings(start_pos + seqlen)[
                 :, start_pos : start_pos + seqlen, :
-            ].to(input_ids.device)
+            ].to(
+                input_ids.device
+            )  # add positional encoding of start_pos:seqlen
             hidden_state = hidden_state + pos_info
         else:
             freqs = self.emb_freq[:, start_pos : start_pos + seqlen].to(
                 input_ids.device
             )
+
         mask = None
         if seqlen > 1:
             mask = self.create_mask_for_decoder(
@@ -175,6 +202,7 @@ class Seq2SeqDecoderModel(nn.Module):
                 attention_mask=mask,
                 encoder_hidden_state=encoder_hidden_state,
                 encoder_attention_mask=encoder_attention_mask,
+                freqs=freqs,
                 use_cache=use_cache,
                 start_pos=start_pos,
             )
@@ -186,6 +214,13 @@ class Seq2SeqDecoderModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len)
+            attention_mask: torch.Tensor of shape (batch,seqlen)
+        return:
+               attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen)
+        """
         device = input_ids.device
         batch_size, seq_length = input_ids.shape
         if attention_mask is None:
@@ -231,11 +266,12 @@ class EncoderDecoderModel(nn.Module):
         decoder_config,
         encoder: Optional[nn.Module] = None,
         encoder_pos_embedding_type: Optional[str] = "absolute",
-        encoder_attention_type: str = None,
+        encoder_attention_type: Optional[str] = None,
         decoder_pos_embedding_type: Optional[str] = "absolute",
-        decoder_attention_type: str = None,
+        decoder_attention_type: Optional[str] = None,
     ) -> None:
         super().__init__()
+        self.is_gqa = True if decoder_attention_type == "gqa" else False
         self.encoder = (
             encoder
             if encoder is not None
@@ -262,13 +298,27 @@ class EncoderDecoderModel(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ):
+        """
+        Args:
+            input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`
+            attention_mask: torch.Tensor of shape (batch,seqlen) for encoder
+            decoder_input_ids: torch.LongTensor of shape (batch, seq_len)` for decoder
+            decoder_attention_mask =  torch.Tensor of shape (batch,seqlen)` for decoder
+            encoder_output:Optional torch.Tensor of shape (batch,seqlen, dim) from encoder
+            use_cache: Optional False to enable kv-cache for generation
+            start:pos: Optional 0, use it in case of kv-cache
+        return:
+               key_value_state: torch.Tensor of shape (batch, seq_len, embed_dim)
+               logits: torch.Tensor of shape (batch,seqlen, vocab_size)
+
+        """
 
         if encoder_output is None:
             encoder_output = self.encoder(
                 input_ids=input_ids, attention_mask=attention_mask
             ).logits
 
-        if attention_mask is None:
+        if attention_mask is None:  # make encoder attention mask
             encoder_batch_size, encoder_sequence_length, _ = encoder_output.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             attention_mask = torch.ones(
@@ -294,22 +344,27 @@ class EncoderDecoderModel(nn.Module):
         return Seq2SeqOutput(key_value_states=encoder_output, logits=decoder_output)
 
     def get_encoder(self) -> nn.Module:
+        """return encoder model"""
         return self.encoder
 
     def get_encoder_output(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> object:
+        """return enocder output"""
         return self.encoder(input_ids=input_ids, attention_mask=attention_mask)
 
     def get_decoder(self) -> Seq2SeqDecoderModel:
+        """return decoder model"""
         return self.decoder
 
     def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
+        """setup kv-cache hooks for every self-attention and cross-attention layer"""
         for layer in self.decoder.all_layer:
-            layer.attention.cache = cls(config)
-            layer.cross_attention.cache = cls(config)
+            layer.attention.cache = cls(config, is_gqa=self.is_gqa)
+            layer.cross_attention.cache = cls(config, is_gqa=self.is_gqa)
 
     def _clean_cache(self) -> None:
+        """destroy kv-cache hooks for every self-attention and cross-attention layer"""
         for layer in self.decoder.all_layer:
             layer.attention.cache = None
             layer.cross_attention.cache = None
@@ -321,9 +376,9 @@ class EncoderDecoderModel(nn.Module):
         decoder_config,
         encoder: Optional[nn.Module] = None,
         encoder_pos_embedding_type: Optional[str] = "absolute",
-        encoder_attention_type: str = None,
+        encoder_attention_type: Optional[str] = None,
         decoder_pos_embedding_type: Optional[str] = "absolute",
-        decoder_attention_type: str = None,
+        decoder_attention_type: Optional[str] = None,
     ) -> nn.Module:
         return cls(
             encoder_config,

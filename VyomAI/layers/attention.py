@@ -49,12 +49,23 @@ class AttentionSelfOutput(nn.Module):
             config.hidden_size if out_features is None else out_features,
             bias=bias,
         )
-        self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layernorm = nn.LayerNorm(
+            config.hidden_size, eps=getattr(config, "layer_norm_eps", 1e-6)
+        )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.FloatTensor of shape (batch, seq_len, embed_dim)`
+            input_tensor: torch.FloatTensor of shape (batch, seq_len, embed_dim)`
+
+        return:
+               hidden_states: torch.FloatTensor of shape (batch, seq_len, embed_dim)
+
+        """
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.layernorm(hidden_states + input_tensor)
@@ -90,21 +101,33 @@ class EncoderAttention(nn.Module):
         hidden_state: torch.Tensor,
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
+        k_freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
         q = self.query(hidden_state)
         k = self.key(hidden_state)
         v = self.value(hidden_state)
-        # q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
-        # place holder for RoPe operation
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
         if freqs is not None:
-            q, k = apply_rotary_pos_emb(q, k, freqs)
+            q, k = apply_rotary_pos_emb(
+                q, k, freqs, k_freqs=k_freqs
+            )  # apply RoPE if freqs is available
 
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
         return self.out(out, hidden_state)
 
@@ -153,22 +176,38 @@ class EncoderAttentionGqa(nn.Module):
         hidden_state: torch.Tensor,
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
+        k_freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
         q = self.query(hidden_state)
         k = self.key(hidden_state)
         v = self.value(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
 
         if freqs is not None:
-            q, k = apply_rotary_pos_emb(q, k, freqs)
+            q, k = apply_rotary_pos_emb(
+                q, k, freqs, k_freqs
+            )  # apply RoPE if freqs is available
 
-        k = repeat_kv(k, n_rep=self.num_key_value_groups)
+        k = repeat_kv(
+            k, n_rep=self.num_key_value_groups
+        )  # in case of GQA repeat k,v to make it same as q
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)
@@ -197,11 +236,6 @@ class DecoderAttention(nn.Module):
         )
         self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
         self.num_attention_heads = config.num_attention_heads
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
-            print("Decoder Using Rotatry Embedding")
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times:
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -213,18 +247,28 @@ class DecoderAttention(nn.Module):
         freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
-    ) -> Tuple[torch.Tensor, object]:
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            Attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
         q = self.query(hidden_state)
         k = self.key(hidden_state)
         v = self.value(hidden_state)
-        # q,k,v = self.qkv(hidden_state).chunk(3, dim = -1) #b X l X d dim =-1 or 2
-        # place holder for RoPe operation
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
 
         if freqs is not None:
-            q, k = apply_rotary_pos_emb(q, k, freqs)
+            q, k = apply_rotary_pos_emb(q, k, freqs)  # apply RoPE if freqs is available
 
         if use_cache:
             cache = getattr(self, "cache", None)
@@ -237,6 +281,7 @@ class DecoderAttention(nn.Module):
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)
@@ -289,14 +334,26 @@ class DecoderAttentionGqa(nn.Module):
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            Attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
         q = self.query(hidden_state)
         k = self.key(hidden_state)
         v = self.value(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
         k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
         v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
         if freqs is not None:
-            q, k = apply_rotary_pos_emb(q, k, freqs)
+            q, k = apply_rotary_pos_emb(q, k, freqs)  # apply RoPE if freqs is available
 
         if use_cache:
             cache = getattr(self, "cache", None)
@@ -306,12 +363,15 @@ class DecoderAttentionGqa(nn.Module):
                 )
             k, v = cache.update(k, v, start_pos)
 
-        k = repeat_kv(k, n_rep=self.num_key_value_groups)
+        k = repeat_kv(
+            k, n_rep=self.num_key_value_groups
+        )  # in case of GQA repeat k,v to make it same as q
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
 
         out = torch.nn.functional.scaled_dot_product_attention(
             query=q, key=k, value=v, attn_mask=attention_mask
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)
@@ -340,11 +400,6 @@ class EncoderDecoderAttention(nn.Module):
         )
         self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
         self.num_attention_heads = config.num_attention_heads
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times:
-            print("EncoderDecoder Attention Using Rotatry Embedding")
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash and self.layer_idx == 0:  # avoid to print m times:
             print("WARNING: Flash Attention requires PyTorch >= 2.0")
@@ -352,23 +407,38 @@ class EncoderDecoderAttention(nn.Module):
     def forward(
         self,
         hidden_state: torch.Tensor,
-        key_value_states: torch.Tensor,
-        attention_mask: torch.Tensor,
+        encoder_hidden_state: torch.Tensor,
+        encoder_attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
+        k_freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
-        start_pos: Optional[int] = 0,
-    ) -> Tuple[torch.Tensor, object]:
-        q = self.query(hidden_state)
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            encoder_hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim)` form encoder in case of seq2seq
+            encoder_attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
 
+        """
+        q = self.query(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
 
         if use_cache == False:  # train
-            k = self.key(key_value_states)
-            v = self.value(key_value_states)
+            k = self.key(encoder_hidden_state)
+            v = self.value(encoder_hidden_state)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            if freqs is not None:
-                q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+            # if freqs is not None:
+            #     q, k = apply_rotary_pos_emb(
+            #         q, k, freqs=freqs, k_freqs=k_freqs
+            #     )  # apply RoPE if freqs is available
+            # k will be fixed while q will vary in generation when using rope apply fixed positional freq on key in cross_attention
 
         if use_cache == True:  # kv-cache is enable
             cache = getattr(self, "cache", None)
@@ -378,13 +448,16 @@ class EncoderDecoderAttention(nn.Module):
                 )
             if (
                 cache is not None and len(cache) == 0
-            ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
-                k = self.key(key_value_states)
-                v = self.value(key_value_states)
+            ):  # first iteration witk kv-cache so store it encoder_hidden_state will be same for rest of the iteration
+                k = self.key(encoder_hidden_state)
+                v = self.value(encoder_hidden_state)
                 k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
                 v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-                if freqs is not None:
-                    q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+                # if freqs is not None:
+                #     q, k = apply_rotary_pos_emb(
+                #         q, k, freqs=freqs, k_freqs=k_freqs
+                #     )  # apply RoPE if freqs is available
+                # k will be fixed while q will vary in generation when using rope apply fixed positional freq on key in cross_attention
                 k, v = self.cache.update(
                     k, v
                 )  # store it will be same for all iteration
@@ -393,8 +466,9 @@ class EncoderDecoderAttention(nn.Module):
                 k, v = self.cache.get()
 
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=attention_mask
+            query=q, key=k, value=v, attn_mask=encoder_attention_mask
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)
@@ -439,31 +513,35 @@ class EncoderDecoderAttentionGqa(nn.Module):
             self.num_key_value_heads * self.head_dim,
             bias=self.attention_bias,
         )
-        self.rotary_emb = (
-            RotaryEmbedding(config=config) if getattr(config, "is_rope", None) else None
-        )
-        if self.rotary_emb != None and self.layer_idx == 0:  # avoid to print m times
-            print("EncoderDecoder Attention Using Rotatry Embedding")
 
     def forward(
         self,
         hidden_state: torch.Tensor,
-        key_value_states: Optional[torch.Tensor],
-        attention_mask: torch.tensor,
+        encoder_hidden_state: torch.Tensor,
+        encoder_attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
-        start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
-        q = self.query(hidden_state)
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            encoder_hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim)` form encoder in case of seq2seq
+            encoder_attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
 
+        """
+        q = self.query(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
         q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
         if use_cache == False:  # train
-            k = self.key(key_value_states)
-            v = self.value(key_value_states)
-            k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            if freqs is not None:
-                q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+            k = self.key(encoder_hidden_state)
+            v = self.value(encoder_hidden_state)
+            k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
+            v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
 
         if use_cache == True:  # kv-cache is enable
             cache = getattr(self, "cache", None)
@@ -473,13 +551,12 @@ class EncoderDecoderAttentionGqa(nn.Module):
                 )
             if (
                 cache is not None and len(cache) == 0
-            ):  # first iteration witk kv-cache so store it it will be same for rest of the iteration
-                k = self.key(key_value_states)
-                v = self.value(key_value_states)
-                k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
-                v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-                if freqs is not None:
-                    q, k = apply_rotary_pos_emb(q, k, freqs=freqs)
+            ):  # first iteration witk kv-cache so store it encoder_hidden_state will be same for rest of the iteration
+                k = self.key(encoder_hidden_state)
+                v = self.value(encoder_hidden_state)
+                k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
+                v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
+
                 k, v = self.cache.update(
                     k, v
                 )  # store it will be same for all iteration
@@ -487,11 +564,14 @@ class EncoderDecoderAttentionGqa(nn.Module):
 
                 k, v = self.cache.get()
 
-        k = repeat_kv(k, n_rep=self.num_key_value_groups)
+        k = repeat_kv(
+            k, n_rep=self.num_key_value_groups
+        )  # in case of GQA repeat k,v to make it same as q
         v = repeat_kv(v, n_rep=self.num_key_value_groups)
         out = torch.nn.functional.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=attention_mask
+            query=q, key=k, value=v, attn_mask=encoder_attention_mask
         )
+        # transform it back into batch_size x seqlen x hidden_dim
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)

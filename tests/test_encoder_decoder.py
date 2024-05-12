@@ -291,15 +291,15 @@ class TestEncoderDecoderKVCache(object):
             encoder_output=encoder_output,
             decoder_start=idx,
         )
-        # model._clean_cache()
-        # model._setup_cache(config)
-        # o2 = generate_seq2seq(
-        #     model=model,
-        #     encoder_attention_mask=attention_mask,
-        #     encoder_output=encoder_output,
-        #     decoder_start=idx,
-        #     use_cache=True,
-        # ) #need to debug this is failing
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_seq2seq(
+            model=model,
+            encoder_attention_mask=attention_mask,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+        )  # need to debug this is failing
         model._clean_cache()
         model._setup_cache(config, cls=DynamicCache)
         o3 = generate_seq2seq(
@@ -309,9 +309,9 @@ class TestEncoderDecoderKVCache(object):
             decoder_start=idx,
             use_cache=True,
         )
-        assert torch.allclose(
-            o1, o3
-        )  # == torch.allclose(o1, o3) == torch.allclose(o2, o3)
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
 
     def test_rope_gqa_rope_gqa(self, config, all_types) -> None:
         input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
@@ -336,15 +336,15 @@ class TestEncoderDecoderKVCache(object):
             encoder_output=encoder_output,
             decoder_start=idx,
         )
-        # model._clean_cache()
-        # model._setup_cache(config)
-        # o2 = generate_seq2seq(
-        #     model=model,
-        #     encoder_attention_mask=attention_mask,
-        #     encoder_output=encoder_output,
-        #     decoder_start=idx,
-        #     use_cache=True,
-        # ) #need to debug this is failing
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_seq2seq(
+            model=model,
+            encoder_attention_mask=attention_mask,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+        )  # need to debug this is failing
         model._clean_cache()
         model._setup_cache(config, cls=DynamicCache)
         o3 = generate_seq2seq(
@@ -354,9 +354,9 @@ class TestEncoderDecoderKVCache(object):
             decoder_start=idx,
             use_cache=True,
         )
-        assert torch.allclose(
-            o1, o3
-        )  # == torch.allclose(o1, o3) == torch.allclose(o2, o3)
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
 
     def test_rope_none_rope_none(self, config, all_types) -> None:
         input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
@@ -399,7 +399,7 @@ class TestEncoderDecoderKVCache(object):
             use_cache=True,
         )
         assert (
-            torch.allclose(o1, o3) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
         )
 
     def test_sinusoidal_none_sinusoidal_none(self, config, all_types) -> None:
@@ -469,15 +469,15 @@ class TestEncoderDecoderKVCache(object):
             encoder_output=encoder_output,
             decoder_start=idx,
         )
-        # model._clean_cache()
-        # model._setup_cache(config)
-        # o2 = generate_seq2seq(
-        #     model=model,
-        #     encoder_attention_mask=attention_mask,
-        #     encoder_output=encoder_output,
-        #     decoder_start=idx,
-        #     use_cache=True,
-        # )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_seq2seq(
+            model=model,
+            encoder_attention_mask=attention_mask,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+        )
         model._clean_cache()
         model._setup_cache(config, cls=DynamicCache)
         o3 = generate_seq2seq(
@@ -487,6 +487,6 @@ class TestEncoderDecoderKVCache(object):
             decoder_start=idx,
             use_cache=True,
         )
-        assert torch.allclose(
-            o1, o3
-        )  # == torch.allclose(o1, o3) == torch.allclose(o2, o3)
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )

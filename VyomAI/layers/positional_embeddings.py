@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 
 
 class AbsoluteEncoding(nn.Module):
+    """Construct the Absolute embeddings from position"""
+
     def __init__(self, config) -> None:
         super().__init__()
         self.pos_embeddings = nn.Embedding(
@@ -28,6 +30,8 @@ class AbsoluteEncoding(nn.Module):
 
 
 class SinusoidalEncoding(nn.Module):
+    """Construct the Sinusoidal embeddings from word, position and token_type embeddings."""
+
     def __init__(self, config) -> None:
         super().__init__()
         if config.hidden_size % 2 != 0:
@@ -60,6 +64,8 @@ class SinusoidalEncoding(nn.Module):
 
 # copied from transformer/models/gemma
 class RotaryEmbedding(nn.Module):
+    """Construct the positionl frequencies for RoPE embedding"""
+
     def __init__(self, config, base=10000, device=None):
         super().__init__()
 
@@ -99,7 +105,7 @@ class RotaryEmbedding(nn.Module):
         return freqs
 
 
-# Copied from transformers.models.llama.modeling_llama.rotate_half
+# Copied from transformers
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -107,14 +113,14 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-# def rotate_half(x):
-#     x1, x2 = x.chunk(2, dim=-1)
-#     return torch.cat((-x2, x1), dim=-1)
+def _rotate_half(x):
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
 
 
-# Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
+# Copied from transformers
 def apply_rotary_pos_emb(
-    q, k, freqs, only_q: bool = False, unsqueeze_dim=1
+    q, k, freqs, k_freqs: Optional[torch.Tensor] = None, unsqueeze_dim=1
 ) -> Tuple[torch.Tensor]:
     """Applies Rotary Position Embedding to the query and key tensors.
 
@@ -134,18 +140,24 @@ def apply_rotary_pos_emb(
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos()
-    sin = emb.sin()
+    cos = emb.cos().to(dtype=q.dtype)
+    sin = emb.sin().to(dtype=q.dtype)
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    #     print(cos.size(),sin.size(),q.size(),k.size())
-    if only_q:
-        q_embed = (q * cos) + (rotate_half(q) * sin)
-    else:
 
-        q_embed = (q * cos) + (rotate_half(q) * sin)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    if (
+        k_freqs is not None
+    ):  # in case of encoder_decoder model keys values always be fixed  while q will be 1 in kv-cache
+        emb = torch.cat((k_freqs, k_freqs), dim=-1)
+        cos = emb.cos().to(dtype=q.dtype)
+        sin = emb.sin().to(dtype=q.dtype)
+        cos = cos.unsqueeze(unsqueeze_dim)
+        sin = sin.unsqueeze(unsqueeze_dim)
         k_embed = (k * cos) + (rotate_half(k) * sin)
-        return q_embed, k_embed
+    else:
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 # To do :  Alibi
