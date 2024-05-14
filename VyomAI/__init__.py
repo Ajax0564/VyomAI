@@ -4,3 +4,4 @@ from .models.encoder_decoder import EncoderDecoderModel, Seq2SeqDecoderModel
 from .layers.kv_cache import DynamicCache, StaticCache
 
 from .generation_utils import generate, generate_seq2seq
+from .layers.adapters import LoraLinear, DoraLinear

@@ -101,7 +101,6 @@ class EncoderAttention(nn.Module):
         hidden_state: torch.Tensor,
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
-        k_freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -121,7 +120,9 @@ class EncoderAttention(nn.Module):
         v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
         if freqs is not None:
             q, k = apply_rotary_pos_emb(
-                q, k, freqs, k_freqs=k_freqs
+                q,
+                k,
+                freqs,
             )  # apply RoPE if freqs is available
 
         out = torch.nn.functional.scaled_dot_product_attention(
@@ -176,7 +177,6 @@ class EncoderAttentionGqa(nn.Module):
         hidden_state: torch.Tensor,
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
-        k_freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -197,7 +197,9 @@ class EncoderAttentionGqa(nn.Module):
 
         if freqs is not None:
             q, k = apply_rotary_pos_emb(
-                q, k, freqs, k_freqs
+                q,
+                k,
+                freqs,
             )  # apply RoPE if freqs is available
 
         k = repeat_kv(
@@ -410,7 +412,6 @@ class EncoderDecoderAttention(nn.Module):
         encoder_hidden_state: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
-        k_freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
     ) -> torch.Tensor:
         """

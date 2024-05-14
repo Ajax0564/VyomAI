@@ -198,7 +198,7 @@ class DecoderModel(nn.Module):
 
     def create_mask_for_decoder(
         self,
-        input_ids,
+        input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:

@@ -210,7 +210,7 @@ class Seq2SeqDecoderModel(nn.Module):
 
     def create_mask_for_decoder(
         self,
-        input_ids,
+        input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
@@ -297,7 +297,7 @@ class EncoderDecoderModel(nn.Module):
         encoder_output: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
-    ):
+    ) -> Seq2SeqOutput:
         """
         Args:
             input_ids: torch.LongTensor of shape (batch, seq_len) for encoder`

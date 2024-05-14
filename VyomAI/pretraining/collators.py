@@ -63,15 +63,18 @@ def masked_language_modeling(
 
 
 def log(t, eps=1e-9) -> torch.Tensor:
+    "get log of input with added epsilon"
     return torch.log(t + eps)
 
 
 def noise(t) -> torch.Tensor:
+    "generate noise for given tensor"
     noise = torch.zeros_like(t).uniform_(0, 1)
     return -log(-log(noise))
 
 
 def sample(t, temperature=1.0) -> torch.Tensor:
+    "for sampling the tokens with added noise and tempreture"
     return ((t / temperature) + noise(t)).argmax(dim=-1)
 
 
@@ -98,7 +101,7 @@ def electra(
         input_ids != tokenizer.pad_token_id, as_tuple=True
     ).to(
         logits.device
-    )  # needed to caluclate loss only non [PAD]  tokens
+    )  # needed to caluclate loss only on  non [PAD]  tokens
     return discriminator_input, disc_labels, non_padded_indices
 
 

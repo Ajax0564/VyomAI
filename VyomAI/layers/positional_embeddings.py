@@ -62,7 +62,7 @@ class SinusoidalEncoding(nn.Module):
         return self.positional_encoding[:, :seq_len]
 
 
-# copied from transformer/models/gemma
+# copied and modified from transformer/models/gemma
 class RotaryEmbedding(nn.Module):
     """Construct the positionl frequencies for RoPE embedding"""
 
@@ -119,9 +119,7 @@ def _rotate_half(x):
 
 
 # Copied from transformers
-def apply_rotary_pos_emb(
-    q, k, freqs, k_freqs: Optional[torch.Tensor] = None, unsqueeze_dim=1
-) -> Tuple[torch.Tensor]:
+def apply_rotary_pos_emb(q, k, freqs, unsqueeze_dim=1) -> Tuple[torch.Tensor]:
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -146,17 +144,8 @@ def apply_rotary_pos_emb(
     sin = sin.unsqueeze(unsqueeze_dim)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
-    if (
-        k_freqs is not None
-    ):  # in case of encoder_decoder model keys values always be fixed  while q will be 1 in kv-cache
-        emb = torch.cat((k_freqs, k_freqs), dim=-1)
-        cos = emb.cos().to(dtype=q.dtype)
-        sin = emb.sin().to(dtype=q.dtype)
-        cos = cos.unsqueeze(unsqueeze_dim)
-        sin = sin.unsqueeze(unsqueeze_dim)
-        k_embed = (k * cos) + (rotate_half(k) * sin)
-    else:
-        k_embed = (k * cos) + (rotate_half(k) * sin)
+
+    k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
