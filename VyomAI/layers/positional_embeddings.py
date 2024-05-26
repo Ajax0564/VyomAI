@@ -150,3 +150,30 @@ def apply_rotary_pos_emb(q, k, freqs, unsqueeze_dim=1) -> Tuple[torch.Tensor]:
 
 
 # To do :  Alibi
+
+
+class VitAbsoluteEncoding(nn.Module):
+    """Construct the Absolute embeddings for vision model"""
+
+    def __init__(self, config) -> None:
+        super().__init__()
+        image_height, image_width = config.image_size
+        patch_height, patch_width = config.patch_size
+        assert (
+            image_height % patch_height == 0 and image_width % patch_width == 0
+        ), "Image dimensions must be divisible by the patch size."
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = config.num_channels * patch_height * patch_width
+        self.pos_embeddings = nn.Parameter(torch.randn(1, num_patches + 1, patch_dim))
+        self.register_buffer(
+            "num_patches",
+            torch.arange(num_patches + 1).expand((1, -1)),
+            persistent=False,
+        )
+
+    def forward(self, img_seq: torch.Tensor) -> torch.Tensor:
+        b, n, _ = img_seq.shape
+
+        img_seq += self.pos_embeddings[:, : (n + 1)]
+        return img_seq

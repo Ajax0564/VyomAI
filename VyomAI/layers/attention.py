@@ -576,3 +576,54 @@ class EncoderDecoderAttentionGqa(nn.Module):
         out = rearrange(out, "b h l d -> b l (h d)")
 
         return self.out(out, hidden_state)
+
+
+class VisionAttention(nn.Module):
+    def __init__(self, config, layer_idx: int) -> None:
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        self.head_size = int(config.hidden_size // config.num_attention_heads)
+        self.attention_bias = getattr(config, "attention_bias", True)
+        self.layer_idx = layer_idx
+        self.qkv = nn.Linear(config.hidden_size, 3 * config.hidden_size)
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.num_attention_heads = config.num_attention_heads
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
+
+        q, k, v = self.qkv(hidden_state).chunk(3, dim=-1)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
+        q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(
+                q,
+                k,
+                freqs,
+            )  # apply RoPE if freqs is available
+
+        out = torch.nn.functional.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attention_mask, is_causal=False
+        )
+        # transform it back into batch_size x seqlen x hidden_dim
+        out = rearrange(out, "b h l d -> b l (h d)")
+        return self.out(out, hidden_state)

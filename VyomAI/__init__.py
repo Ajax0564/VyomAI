@@ -5,3 +5,4 @@ from .layers.kv_cache import DynamicCache, StaticCache
 
 from .generation_utils import generate, generate_seq2seq
 from .layers.adapters import LoraLinear, DoraLinear
+from .models.vision_encoder import Vit
