@@ -1,4 +1,8 @@
 # VyomAI
+**Transfomer models implementation from scratch using pytorch to make it more accessible for research purposes.** 
+
+# Examples
+Models implemented from scratch using Pytorch 2.0
 | Task | dataset link | Pyotch 2.0 | description
 |---|---|:---:|:---:|
 |[**`text classification`**](https://) | [WikiText-2](https://) |✅|encoder model for text classification|
