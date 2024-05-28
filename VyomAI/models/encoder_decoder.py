@@ -79,7 +79,7 @@ class Seq2SeqDecoderLayer(nn.Module):
             use_cache=use_cache,
         )
 
-        out = self.feed_forward(out, out)
+        out = self.feed_forward(out, hidden_state)
         return out
 
 
