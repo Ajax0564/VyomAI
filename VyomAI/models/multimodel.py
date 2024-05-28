@@ -23,12 +23,6 @@ class DecoderOutput(object):
     logits: torch.Tensor
 
 
-@dataclass
-class CLMOutput(object):
-    hidden_state: torch.Tensor
-    logits: torch.Tensor
-
-
 class DecoderLayer(nn.Module):
     "decoder layer for decoder model"
 
@@ -100,8 +94,8 @@ class LMHead(nn.Module):
         return x
 
 
-class DecoderModel(nn.Module):
-    "Decoder model for language modeling"
+class VisionLanguageDecoderModel(nn.Module):
+    "VisionLanguageModel for language modeling"
 
     def __init__(
         self,
@@ -149,6 +143,7 @@ class DecoderModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_state: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
@@ -165,7 +160,15 @@ class DecoderModel(nn.Module):
         """
         _bsz, seqlen = input_ids.shape
         hidden_state = self.word_embeddings(input_ids)
+        if start_pos == 0:
+            hidden_state = torch.cat(
+                [encoder_hidden_state.unsqueeze(1), hidden_state], dim=1
+            )
+            if attention_mask is not None:
+                extra_token = torch.full((_bsz, 1), 1).to(input_ids.device)
+                attention_mask = torch.cat([extra_token, attention_mask], dim=1)
         freqs = None
+        _bsz, seqlen, _ = hidden_state.shape
         if self.position_embeddings is not None:
             pos_info = self.position_embeddings(start_pos + seqlen)[
                 :, start_pos : start_pos + seqlen, :
@@ -178,7 +181,9 @@ class DecoderModel(nn.Module):
         mask = None
         if seqlen > 1:
             mask = self.create_mask_for_decoder(
-                input_ids=input_ids, attention_mask=attention_mask, start_pos=start_pos
+                hidden_state=hidden_state,
+                attention_mask=attention_mask,
+                start_pos=start_pos,
             )
             mask = (1.0 - mask) * torch.finfo(
                 hidden_state.dtype
@@ -193,11 +198,11 @@ class DecoderModel(nn.Module):
                 start_pos=start_pos,
             )
         logits = self.lm_head(hidden_state)
-        return CLMOutput(hidden_state=hidden_state, logits=logits)
+        return DecoderOutput(logits=logits)
 
     def create_mask_for_decoder(
         self,
-        input_ids: torch.Tensor,
+        hidden_state: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
@@ -208,8 +213,8 @@ class DecoderModel(nn.Module):
         return:
                attention_mask: torch.Tensor of shape (batch,1,seqlen,seqlen) for encoder
         """
-        device = input_ids.device
-        batch_size, seq_length = input_ids.shape
+        device = hidden_state.device
+        batch_size, seq_length, _ = hidden_state.shape
         if attention_mask is None:
             attention_mask = (
                 torch.ones(seq_length + start_pos).repeat(batch_size, 1).to(device)
@@ -249,12 +254,54 @@ class DecoderModel(nn.Module):
     ) -> nn.Module:
         return cls(config, pos_embedding_type, attention_type)
 
+
+class VisionLanguageModel(nn.Module):
+
+    def __init__(
+        self,
+        config,
+        encoder,
+        pos_embedding_type: Optional[str] = "absolute",
+        attention_type: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = VisionLanguageDecoderModel(
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+
+    def forward(
+        self,
+        pixel_values: Optional[torch.LongTensor] = None,
+        decoder_input_ids: Optional[torch.LongTensor] = None,
+        decoder_attention_mask: Optional[torch.LongTensor] = None,
+        encoder_output: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        start_pos: Optional[int] = 0,
+    ) -> DecoderOutput:
+        if encoder_output is None:
+            encoder_output = self.encoder(pixel_values=pixel_values).logits[
+                :, 0, :
+            ]  # get cls token information
+
+        decoder_output = self.decoder(
+            input_ids=decoder_input_ids,
+            attention_mask=decoder_attention_mask,
+            encoder_hidden_state=encoder_output,
+            use_cache=use_cache,
+            start_pos=start_pos,
+        )
+
+        return decoder_output
+
     def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
         """setup kv-cache hooks for every self-attention layer"""
-        for layer in self.all_layer:
+        for layer in self.decoder.all_layer:
             layer.attention.cache = cls(config, is_gqa=self.is_gqa)
 
     def _clean_cache(self) -> None:
         """destroy kv-cache hooks for every self-attention layer"""
-        for layer in self.all_layer:
+        for layer in self.decoder.all_layer:
             layer.attention.cache = None
