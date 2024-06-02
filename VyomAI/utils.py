@@ -87,7 +87,7 @@ def timing_cuda(
 
 
 @dataclass
-class Config:
+class EncoderConfig:
     hidden_size: int = 768
     num_attention_heads: int = 12
     max_position_embeddings: int = 514
