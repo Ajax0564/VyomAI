@@ -55,6 +55,7 @@ If you want to contribute new features, utility functions, or tutorials please  
 **Some helpfull learning resources**
 - [1] https://www.youtube.com/@stanfordonline
 - [2] https://d2l.ai/
+- [3] https://pytorch.org/tutorials/
 
 ## References
 - [1] https://github.com/huggingface/transformers
