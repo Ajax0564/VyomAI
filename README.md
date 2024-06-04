@@ -1,5 +1,7 @@
 # VyomAI
-**Transfomer models implementation from scratch using pytorch to make it more accessible for research purposes.** 
+**Transfomer models implementation from scratch using pytorch to make it more accessible for research purposes.**
+
+**The best way to understand is learning by doing.** 
 
 # Examples
 **Each example is in one single notebook for readability and understanding**
@@ -15,7 +17,8 @@
 |[**`seq2seq modeling`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/Seq2seq-absolute.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|seq2seq model training for image caption with kv-cache|
 |[**`adapters`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/adapters.ipynb) | [clinc_oos](https://www.kaggle.com/code/ajax0564/data-for-distilation) |✅|Lora and Dora for parameter efficient tunning|
 |[**`vit`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/vit.ipynb) | [Scene-classification](https://www.kaggle.com/datasets/nitishabharathi/scene-classification) |✅|visual image transformer for image classification|
-|[**`clip`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/clip.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|implementation of contrastive language-image pre-training|
+|[**`detr`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/clip.ipynb) | [Global-Wheat-Detection](https://www.kaggle.com/competitions/global-wheat-detection) |✅|implementation of detr DEtection TRansformer encoder decoder model for object detection|
+|[**`clip`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/detr.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|implementation of contrastive language-image pre-training|
 |[**`vision language multimodel`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/Multimodel_basic.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|A minimmal vision-language model implementation with image-text fusion  to generate image caption with RoPE and kv-cache|
 ****More to come**
 
