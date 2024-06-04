@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from typing import Optional, List, Tuple
 from VyomAI import DecoderModel, StaticCache, DynamicCache
-from VyomAI import generate
+from VyomAI import generate_multimodel
 import pytest
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -247,3 +247,363 @@ class TestVisionLanguageDecoderCLM(object):
                     decoder_attention_mask=attention_mask,
                 ).logits.shape
             ) == [3, 18, 50265]
+
+
+class TestVisionLanguageDecoderKVCache(object):
+    # tokenizer.bos_token_id = 0 for roberta tokenizer
+
+    def test_absolute(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[0]
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_absolute_gqa(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        config.num_key_value_heads = 4
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[1]
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_sinusoidal(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[2]
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_sinusoidal_gqa(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[3]
+        config.num_key_value_heads = 4
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_sinusoidal(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[2]
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_sinusoidal_gqa(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[3]
+        config.num_key_value_heads = 4
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_rope(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[4]
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )
+
+    def test_rope_gqa(self, get_vit, config, all_types):
+        img = torch.rand((1, 3, 224, 224)).to(device)
+        encoder = get_vit
+        pos_embedding_type, attention_type = all_types[5]
+        config.num_key_value_heads = 4
+        model = get_vision_language_model(
+            encoder=encoder,
+            config=config,
+            pos_embedding_type=pos_embedding_type,
+            attention_type=attention_type,
+        )
+        encoder_output = model.get_encoder_output(pixel_values=img)
+        # encoder_output = encoder_output = multimodel.get_encoder_output(pixel_values)
+        idx = torch.tensor([0]).unsqueeze(0).to(device)
+        o1 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config)
+        o2 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        model._clean_cache()
+        model._setup_cache(config, cls=DynamicCache)
+        o3 = generate_multimodel(
+            model=model,
+            encoder_attention_mask=None,
+            encoder_output=encoder_output,
+            decoder_start=idx,
+            use_cache=True,
+            max_new_tokens=8,
+        )
+        assert (
+            torch.allclose(o1, o3) == torch.allclose(o1, o2) == torch.allclose(o2, o3)
+        )

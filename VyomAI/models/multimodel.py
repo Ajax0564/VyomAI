@@ -265,6 +265,7 @@ class VisionLanguageModel(nn.Module):
         attention_type: Optional[str] = None,
     ) -> None:
         super().__init__()
+        self.is_gqa = True if attention_type == "gqa" else False
         self.encoder = encoder
         self.decoder = VisionLanguageDecoderModel(
             config=config,
@@ -295,6 +296,12 @@ class VisionLanguageModel(nn.Module):
         )
 
         return decoder_output
+
+    def get_decoder(self) -> nn.Module:
+        return self.decoder
+
+    def get_encoder_output(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        return self.encoder(pixel_values=pixel_values).logits[:, 0, :]
 
     def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
         """setup kv-cache hooks for every self-attention layer"""
