@@ -20,7 +20,7 @@
 |[**`detr`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/detr.ipynb) | [Global-Wheat-Detection](https://www.kaggle.com/competitions/global-wheat-detection) |✅|implementation of detr DEtection TRansformer encoder decoder model for object detection|
 |[**`clip`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/clip.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|implementation of contrastive language-image pre-training|
 |[**`vision language multimodel-I`**](https://github.com/Ajax0564/VyomAI/blob/main/Examples/MultiModel_basic.ipynb)|[COCO](https://www.kaggle.com/datasets/nikhil7280/coco-image-caption) |✅|A minimmal vision-language model implementation with image-text fusion  to generate image caption with RoPE and kv-cache|
-|[**`vision language multimodel-II`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/clip.ipynb) |[COCO](https://www.kaggle.com/datasets/nikhil7280/coco-image-caption) |✅|A Multimodel implementation with image-text fusion  to generate caption of  image  with RoPE and kv-cache  which can we extended to VQA, OCR etc|
+|[**`vision language multimodel-II`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/MultiModel_advance.ipynb) |[COCO](https://www.kaggle.com/datasets/nikhil7280/coco-image-caption) |✅|A Multimodel implementation with image-text fusion  to generate caption of  image  with RoPE and kv-cache  which can we extended to VQA, OCR etc|
 |[**`Paligemma`**](https://github.com/Ajax0564/VyomAI/blob/main/Examples/paligemma.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|Scratch implementation of Paligemma a Multimodel from Google-AI|
 ****More to come**
 
