@@ -5,6 +5,28 @@ from typing import Optional, Tuple
 
 
 class AbsoluteEncoding(nn.Module):
+    """
+    Construct the Absolute embeddings from position.
+    Args:
+        config (object): Configuration object containing the following attributes:
+            - max_position_embeddings (int): Maximum number of position embeddings.
+            - hidden_size (int): Size of the hidden layer.
+            - pad_token_id (int, optional): Padding token ID.
+    Attributes:
+        pos_embeddings (nn.Embedding): Embedding layer for position embeddings.
+        position_ids (torch.Tensor): Tensor containing position IDs.
+        max_size (int): Maximum number of position embeddings.
+    Methods:
+        forward(size: int) -> torch.Tensor:
+            Generates position embeddings for the given size.
+            Args:
+                size (int): The size for which to generate position embeddings.
+            Returns:
+                torch.Tensor: Position embeddings of the specified size.
+            Raises:
+                ValueError: If the specified size exceeds the maximum number of position embeddings.
+    """
+
     """Construct the Absolute embeddings from position"""
 
     def __init__(self, config) -> None:
@@ -30,6 +52,28 @@ class AbsoluteEncoding(nn.Module):
 
 
 class SinusoidalEncoding(nn.Module):
+    """
+    Construct the Sinusoidal embeddings from word, position, and token_type embeddings.
+    This class generates sinusoidal positional encodings as described in the paper
+    "Attention is All You Need" by Vaswani et al. The positional encodings have the
+    same dimension as the embeddings so that the two can be summed.
+    Attributes:
+        positional_encoding (torch.Tensor): A tensor containing the precomputed
+            sinusoidal positional encodings.
+        position (torch.Tensor): A tensor containing the position indices.
+        div_term (torch.Tensor): A tensor containing the scaling factors for the
+            sinusoidal functions.
+    Args:
+        config: A configuration object that contains the following attributes:
+            hidden_size (int): The size of the hidden layer. Must be an even number.
+            max_position_embeddings (int): The maximum number of position embeddings.
+    Raises:
+        ValueError: If the hidden_size is not an even number.
+    Methods:
+        forward(seq_len: int) -> torch.Tensor:
+            Returns the positional encodings for the given sequence length.
+    """
+
     """Construct the Sinusoidal embeddings from word, position and token_type embeddings."""
 
     def __init__(self, config) -> None:
@@ -62,58 +106,47 @@ class SinusoidalEncoding(nn.Module):
         return self.positional_encoding[:, :seq_len]
 
 
-# copied and modified from transformer/models/gemma
 class RotaryEmbedding(nn.Module):
-    """Construct the positionl frequencies for RoPE embedding"""
+    """
+    RotaryEmbedding is a PyTorch module that implements rotary positional embeddings for attention mechanisms.
+    Args:
+        config (object): Configuration object containing the following attributes:
+            hidden_size (int): The hidden size of the model.
+            num_attention_heads (int): The number of attention heads.
+    Attributes:
+        inv_freq (torch.Tensor): A tensor containing the inverse frequencies for the rotary embeddings.
+    Methods:
+        forward(seq_len):
+            Computes the rotary positional embeddings for a given sequence length.
+            Args:
+                seq_len (int): The length of the input sequence.
+            Returns:
+                torch.Tensor: A tensor containing the rotary positional embeddings with shape (1, seq_len, dim).
+    """
 
-    def __init__(self, config, base=10000, device=None):
+    def __init__(self, config):
         super().__init__()
+        dim = int(config.hidden_size // config.num_attention_heads)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
 
-        self.dim = int(config.hidden_size // config.num_attention_heads)
-        self.max_position_embeddings = config.max_position_embeddings
-        self.base = base
-        self.register_buffer(
-            "inv_freq",
-            1.0
-            / (
-                self.base
-                ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float() / self.dim)
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "position_ids",
-            torch.arange(config.max_position_embeddings).expand((1, -1)),
-            persistent=False,
-        )
+    def forward(self, seq_len):
+        t = torch.arange(seq_len, device=self.inv_freq.device).type_as(self.inv_freq)
+        freqs = torch.einsum("i, j -> i j", t, self.inv_freq)
 
-    @torch.no_grad()
-    def forward(self, seq_len: int = None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        # size = x.size()[2]
-        position_ids = torch.arange(seq_len).unsqueeze(0)
-        # position_ids = self.position_ids[:, :size].float()
-
-        inv_freq_expanded = (
-            self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        )
-        position_ids_expanded = position_ids[:, None, :].float()
-
-        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(
-            1, 2
-        )
-        return freqs
+        return freqs[None, :, :]
 
 
-# Copied from transformers
 def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
+    """
+    Rotates half the hidden dimensions of the input tensor.
 
+    Args:
+        x (torch.Tensor): The input tensor to be rotated.
 
-def _rotate_half(x):
+    Returns:
+        torch.Tensor: The tensor with half of its hidden dimensions rotated.
+    """
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
 
@@ -153,6 +186,20 @@ def apply_rotary_pos_emb(q, k, freqs, unsqueeze_dim=1) -> Tuple[torch.Tensor]:
 
 
 class VitAbsoluteEncoding(nn.Module):
+    """
+    Construct the Absolute embeddings for vision model.
+    This class implements the absolute positional encoding for a Vision Transformer (ViT) model.
+    It generates positional embeddings for image patches and adds them to the input image sequence.
+    Attributes:
+        pos_embeddings (torch.nn.Parameter): Positional embeddings for the image patches.
+        num_patches (torch.Tensor): Number of patches in the image.
+    Args:
+        config (object): Configuration object containing image size, patch size, and number of channels.
+    Methods:
+        forward(img_seq: torch.Tensor) -> torch.Tensor:
+            Adds positional embeddings to the input image sequence.
+    """
+
     """Construct the Absolute embeddings for vision model"""
 
     def __init__(self, config) -> None:

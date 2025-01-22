@@ -1,7 +1,7 @@
 # GPT style model for  Casual language modeling
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+from typing import Optional
 from ..layers.attention import DecoderAttention, DecoderAttentionGqa
 from ..layers.positional_embeddings import (
     AbsoluteEncoding,
@@ -25,11 +25,20 @@ class DecoderOutput(object):
 
 @dataclass
 class CLMOutput(object):
+    """
+    CLMOutput is a data class that encapsulates the output of a causal language model (CLM).
+
+    Attributes:
+        hidden_state (torch.Tensor): The hidden states of the model.
+        logits (torch.Tensor): The logits produced by the model.
+    """
+
     hidden_state: torch.Tensor
     logits: torch.Tensor
 
 
 class DecoderLayer(nn.Module):
+
     "decoder layer for decoder model"
 
     def __init__(
