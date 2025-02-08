@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, reduce, repeat
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from .positional_embeddings import apply_rotary_pos_emb, RotaryEmbedding
 
 
@@ -435,11 +435,6 @@ class EncoderDecoderAttention(nn.Module):
             v = self.value(encoder_hidden_state)
             k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
             v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
-            # if freqs is not None:
-            #     q, k = apply_rotary_pos_emb(
-            #         q, k, freqs=freqs, k_freqs=k_freqs
-            #     )  # apply RoPE if freqs is available
-            # k will be fixed while q will vary in generation when using rope apply fixed positional freq on key in cross_attention
 
         if use_cache == True:  # kv-cache is enable
             cache = getattr(self, "cache", None)

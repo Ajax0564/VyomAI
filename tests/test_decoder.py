@@ -3,8 +3,7 @@ from itertools import product
 import torch
 import torch.nn as nn
 from typing import Optional, List, Tuple
-from VyomAI import DecoderModel, StaticCache, DynamicCache
-from VyomAI import generate
+from VyomAI import DecoderModel, DynamicCacheOne, StaticCacheOne
 import pytest
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,17 +146,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
+        # device = model.device
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
 
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
@@ -171,18 +170,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
         )
@@ -193,17 +191,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
+        # device = model.device
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
 
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
@@ -215,17 +213,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
+        # device = model.device
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
 
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
@@ -236,18 +234,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
+        # device = model.device
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
-
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
         )
@@ -258,18 +255,17 @@ class TestDecoderKVCache(object):
         model = get_decoder(
             config, pos_embedding_type=pos_embedding_type, attention_type=attention_type
         )
-        tokenize_text = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long)
+        # device = model.device
+        input_ids = torch.tensor([[9226, 16, 5, 1296]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor([[1, 1, 1, 1]], dtype=torch.long, device=device)
 
-        o1 = generate(model=model, tokenize_text=tokenize_text)
+        o1 = model.generate(input_ids, attention_mask, use_cache=False)
 
-        model._clean_cache()
-        model._setup_cache(config)
-        o2 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
+        o2 = model.generate(input_ids, attention_mask, use_cache=True)
 
-        model._clean_cache()
-        model._setup_cache(config, cls=DynamicCache)
-        o3 = generate(model=model, tokenize_text=tokenize_text, use_cache=True)
-
+        o3 = model.generate(
+            input_ids, attention_mask, use_cache=True, use_static_cache=True
+        )
         assert (
             torch.allclose(o1, o2) == torch.allclose(o1, o3) == torch.allclose(o2, o3)
         )

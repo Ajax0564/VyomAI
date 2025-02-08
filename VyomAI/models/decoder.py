@@ -1,16 +1,19 @@
 # GPT style model for  Casual language modeling
 import torch
 import torch.nn as nn
-from typing import Optional
-from ..layers.attention import DecoderAttention, DecoderAttentionGqa
+from typing import Optional, List
 from ..layers.positional_embeddings import (
     AbsoluteEncoding,
     SinusoidalEncoding,
     RotaryEmbedding,
 )
 from ..layers.ffn import FeedForward
-from ..layers.kv_cache import DynamicCache, StaticCache
+from ..layers.kv_cache import DynamicCacheOne, StaticCacheOne
 from dataclasses import dataclass
+from typing import Optional, List
+from ..layers.attention import repeat_kv, AttentionSelfOutput
+from einops import rearrange
+from ..layers.positional_embeddings import apply_rotary_pos_emb
 
 _position_embeddings = {
     "absolute": AbsoluteEncoding,
@@ -35,6 +38,167 @@ class CLMOutput(object):
 
     hidden_state: torch.Tensor
     logits: torch.Tensor
+    kv_cache: List[torch.FloatTensor] = None
+
+
+class DecoderAttention(nn.Module):
+    def __init__(self, config, layer_idx: int) -> None:
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        self.head_size = int(config.hidden_size // config.num_attention_heads)
+        self.attention_bias = getattr(config, "attention_bias", True)
+        self.layer_idx = layer_idx
+        # self.qkv = nn.Linear(config.hidden_size,3*config.hidden_size)
+        self.query = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.key = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.value = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.num_attention_heads = config.num_attention_heads
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        if not self.flash and self.layer_idx == 0:  # avoid to print m times:
+            print("WARNING: Flash Attention requires PyTorch >= 2.0")
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        kv_cache: List[torch.FloatTensor] = None,
+        start_pos: Optional[int] = 0,
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            Attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
+        q = rearrange(q, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        k = rearrange(k, "b l (h d) -> b h l d", h=self.num_attention_heads)
+        v = rearrange(v, "b l (h d) -> b h l d", h=self.num_attention_heads)
+
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)  # apply RoPE if freqs is available
+
+        if use_cache:
+            if kv_cache is None:
+                raise ValueError("you need to pass kv_cache")
+            k, v = kv_cache.update(self.layer_idx, k, v, start_pos)
+
+        out = torch.nn.functional.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attention_mask
+        )
+        # transform it back into batch_size x seqlen x hidden_dim
+        out = rearrange(out, "b h l d -> b l (h d)")
+
+        return self.out(out, hidden_state), kv_cache
+
+
+class DecoderAttentionGqa(nn.Module):
+    def __init__(self, config, layer_idx: int) -> None:
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0:
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        if not self.flash and self.layer_idx == 0:  # avoid to print m times
+            print("WARNING: Flash Attention requires PyTorch >= 2.0")
+        self.layer_idx = layer_idx
+        self.head_dim = int(config.hidden_size // config.num_attention_heads)
+        self.num_attention_heads = config.num_attention_heads
+        self.num_key_value_heads = getattr(config, "num_key_value_heads", 4)
+        self.num_key_value_groups = self.num_attention_heads // self.num_key_value_heads
+        if (
+            self.num_attention_heads % self.num_key_value_heads != 0
+            or self.num_attention_heads < self.num_key_value_heads
+        ):
+            raise ValueError(
+                f"num_key_value_heads {self.num_key_value_heads }  should be less than equal num_attention_heads {config.num_attention_heads} and  multiple of num_attention_heads {config.num_attention_heads} "
+            )
+        self.attention_bias = getattr(config, "attention_bias", True)
+        self.out = AttentionSelfOutput(config=config, bias=self.attention_bias)
+        self.query = nn.Linear(
+            config.hidden_size, config.hidden_size, bias=self.attention_bias
+        )
+        self.key = nn.Linear(
+            config.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=self.attention_bias,
+        )
+        self.value = nn.Linear(
+            config.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=self.attention_bias,
+        )
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: torch.Tensor,
+        freqs: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        kv_cache: List[torch.FloatTensor] = None,
+        start_pos: Optional[int] = 0,
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)`
+            Attention_mask: torch.Tensor of shape (batch,1, seq_len, seqlen)`
+            freqs: Positional freqs in case of RoPE embedding
+            use_cace: Optional to use kvCache
+            start_pos: in case of kvCache to get store kv-cache at start_pos
+        return:
+               hidden_states: torch.Tensor of shape (batch, seq_len, embed_dim)
+
+        """
+        q = self.query(hidden_state)
+        k = self.key(hidden_state)
+        v = self.value(hidden_state)
+        # transform it into batch_size x no_of_heads x seqlen x head_dim for Multihead Attention
+        q = rearrange(q, "b l (h d) -> b h l d", d=self.head_dim)
+        k = rearrange(k, "b l (h d) -> b h l d", d=self.head_dim)
+        v = rearrange(v, "b l (h d) -> b h l d", d=self.head_dim)
+        if freqs is not None:
+            q, k = apply_rotary_pos_emb(q, k, freqs)  # apply RoPE if freqs is available
+
+        if use_cache:
+            if kv_cache is None:
+                raise ValueError("you need to pass kv_cache")
+            k, v = kv_cache.update(self.layer_idx, k, v, start_pos)
+
+        k = repeat_kv(
+            k, n_rep=self.num_key_value_groups
+        )  # in case of GQA repeat k,v to make it same as q
+        v = repeat_kv(v, n_rep=self.num_key_value_groups)
+
+        out = torch.nn.functional.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attention_mask
+        )
+        # transform it back into batch_size x seqlen x hidden_dim
+        out = rearrange(out, "b h l d -> b l (h d)")
+
+        return self.out(out, hidden_state), kv_cache
 
 
 class DecoderLayer(nn.Module):
@@ -61,6 +225,7 @@ class DecoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         freqs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
+        kv_cache: List[torch.FloatTensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
         """
@@ -73,15 +238,16 @@ class DecoderLayer(nn.Module):
                hidden_state: torch.Tensor of shape (batch, seq_len, embed_dim) of last layer
 
         """
-        out = self.attention(
+        out, kv_cache = self.attention(
             hidden_state=hidden_state,
             attention_mask=attention_mask,
             freqs=freqs,
             use_cache=use_cache,
+            kv_cache=kv_cache,
             start_pos=start_pos,
         )
         out = self.feed_forward(out, hidden_state)
-        return out
+        return out, kv_cache
 
 
 class LMHead(nn.Module):
@@ -143,6 +309,7 @@ class DecoderModel(nn.Module):
             ]
         )
         self.lm_head = LMHead(config=config)
+        self.config = config
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -159,6 +326,7 @@ class DecoderModel(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
+        kv_cache: List[torch.FloatTensor] = None,
         start_pos: Optional[int] = 0,
     ) -> torch.Tensor:
         """
@@ -194,15 +362,16 @@ class DecoderModel(nn.Module):
             ).min  # invert it to to add directly to attention score
 
         for layer in self.all_layer:
-            hidden_state = layer(
+            hidden_state, kv_cache = layer(
                 hidden_state,
                 mask,
                 freqs=freqs,
                 use_cache=use_cache,
+                kv_cache=kv_cache,
                 start_pos=start_pos,
             )
         logits = self.lm_head(hidden_state)
-        return CLMOutput(hidden_state=hidden_state, logits=logits)
+        return CLMOutput(hidden_state=hidden_state, logits=logits, kv_cache=kv_cache)
 
     def create_mask_for_decoder(
         self,
@@ -258,12 +427,88 @@ class DecoderModel(nn.Module):
     ) -> nn.Module:
         return cls(config, pos_embedding_type, attention_type)
 
-    def _setup_cache(self, config, cls: Optional[object] = StaticCache) -> None:
-        """setup kv-cache hooks for every self-attention layer"""
-        for layer in self.all_layer:
-            layer.attention.cache = cls(config, is_gqa=self.is_gqa)
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_len: int = 5,
+        temperature: float = 1.0,
+        use_cache: bool = True,
+        do_sample: bool = False,
+        use_static_cache: bool = False,
+    ) -> torch.Tensor:
 
-    def _clean_cache(self) -> None:
-        """destroy kv-cache hooks for every self-attention layer"""
-        for layer in self.all_layer:
-            layer.attention.cache = None
+        device = input_ids.device
+
+        all_prompt_size = [t.size()[0] for t in input_ids]
+
+        min_prompt_len = min(all_prompt_size)
+        max_prompt_len = max(all_prompt_size)
+
+        max_len = (
+            max_len + max_prompt_len
+        )  # get  max len (prompt + to be generated token combined)
+
+        pad_id = getattr(self.config, "pad_token_id", 1)
+        bsz, _ = input_ids.size()
+        tokens = torch.full((bsz, max_len), pad_id, dtype=torch.long, device=device)
+
+        kv_cache = None
+        if use_cache:
+            if use_static_cache:
+                kv_cache = StaticCacheOne(
+                    self.config, max_cache_len=max_len, batch_size=bsz
+                )
+            else:
+                kv_cache = DynamicCacheOne(self.config)
+
+        for k, t in enumerate(input_ids):
+            tokens[k, : t.size()[0]] = t
+
+        prev_pos = 0
+        eos_reached = torch.tensor(
+            [False] * bsz
+        )  # to break generation if eos reached for all  prompt
+
+        input_text_mask = tokens != pad_id  # mask to fill generated values into batch
+
+        stop_tokens = torch.tensor(getattr(self.config, "eos_token_id", 2))
+        for cur_pos in range(min_prompt_len, max_len):
+
+            # Get the model output
+            with torch.no_grad():
+                outputs = self.forward(
+                    input_ids=tokens[:, prev_pos:cur_pos],
+                    attention_mask=attention_mask,
+                    use_cache=use_cache,
+                    kv_cache=kv_cache,
+                    start_pos=prev_pos,
+                )
+            kv_cache = outputs.kv_cache
+            next_token_logits = outputs.logits[:, -1] / temperature
+
+            if do_sample:
+                next_token = torch.multinomial(next_token_logits, num_samples=1)
+            else:
+                _, next_token = torch.topk(next_token_logits, k=1, dim=-1)
+
+            next_token = next_token.reshape(-1)
+            # only replace token if prompt has already been generated
+            next_token = torch.where(
+                input_text_mask[:, cur_pos], tokens[:, cur_pos], next_token
+            )
+            tokens[:, cur_pos] = next_token
+            eos_reached |= (~input_text_mask[:, cur_pos]) & (
+                torch.isin(next_token, stop_tokens)
+            )
+
+            if use_cache:
+                prev_pos = cur_pos
+
+            attention_mask = torch.cat(
+                [attention_mask, torch.ones((bsz, 1), device=device)], dim=-1
+            )
+            if all(eos_reached):
+                break
+        return tokens
