@@ -14,6 +14,7 @@
 |[**`electra language modeling`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/electra-pretraining.ipynb) | [clinc_oos](https://www.kaggle.com/code/ajax0564/data-for-distilation) |✅|encoder model pretraining with electra style| 
 |[**`casual language-modeling`**](https://github.com/Ajax0564/VyomAI/blob/main/Examples/vyom-ai-decoder_clm.ipynb) | [mark-twain-books](https://www.kaggle.com/datasets/msinger007/mark-twain-books) |✅|decoder model pretraining with gpt style and kv-cache for fast inference | 
 |[**`Supervised fine tunning (SFT) and Direct Preference Optimization (DPO)`**](https://github.com/Ajax0564/VyomAI/blob/main/Examples/vyom-ai-llm-sft-dpo-training.ipynb) | [Huggingface dataset](https://www.kaggle.com/datasets/ajax0564/sft-dpo) |✅| Training a base decoder model via SFT and DPO to follow user instructions | 
+|[**`Supervised fine tunning (SFT) and Direct Preference Optimization (DPO)`**](https://github.com/Ajax0564/VyomAI/blob/main/Examples/vyom-ai-llm-sft-dpo-training.ipynb) | [Huggingface dataset](https://www.kaggle.com/datasets/ajax0564/sft-dpo) |✅| Training a base decoder model via SFT and DPO to follow user instructions | 
 |[**`knowledge distilation`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/Knowledge_distilation.ipynb) | [clinc_oos](https://www.kaggle.com/code/ajax0564/data-for-distilation) |✅|initilization of a model from pretrained model|
 |[**`seq2seq modeling`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/Seq2seq-absolute.ipynb) | [Flicker-30k](https://www.kaggle.com/datasets/adityajn105/flickr30k) |✅|seq2seq model training for image caption with kv-cache|
 |[**`adapters`**](https://github.com/Ajax0564/VyomAI/tree/main/Examples/adapters.ipynb) | [clinc_oos](https://www.kaggle.com/code/ajax0564/data-for-distilation) |✅|Lora and Dora for parameter efficient tunning|
@@ -66,3 +67,4 @@ If you want to contribute new features, utility functions, or tutorials please  
 ## References
 - [1] https://github.com/huggingface/transformers
 - [2] https://github.com/facebookresearch/detr
+- [3] https://github.com/meta-llama/llama3
