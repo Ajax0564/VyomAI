@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en" data-lt-installed="true"><head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <script>
+    const text ="Table 1: Task categorization with domain and sampled test data size we used.\n"+
+"\\begin{tabular}{|c|c|c|c|c|}\n"+
+"\\hline Task Type & Domain & Dataset Name & Description & Test Data Size \\\\\n"+
+"\\hline \\multirow{3}{*}{\\begin{tabular}{l} \n"+
+"Factual \\\\\n"+
+"Reasoning\n"+
+"\\end{tabular}} & \\begin{tabular}{l} \n"+
+"In-domain \\\\\n"+
+"Out-of-domain \\\\\n"+
+"Out-of-domain\n"+
+"\\end{tabular} & \\begin{tabular}{l} \n"+
+"HotPoTQA  \\\\\n"+
+"Bamboogle\n"+
+"\\end{tabular} & \\begin{tabular}{l} \n"+
+"2-hop question-answering \\\\\n"+
+"2-hop question-answering \\\\\n"+
+"3-hop question-answering \\\\\n"+
+"2-hop question-answering\n"+
+"\\end{tabular} & \\begin{tabular}{l}\n"+
+"500 \\\\\n"+
+"125 \\\\\n"+
+"500\n"+
+"\\end{tabular} \\\\\n"+
+"\\hline & Out-of-domain & 2WikiMultiHopQA  & 2-hop question-answering & 500 \\\\\n"+
+"\\hline \\multirow{3}{*}{\\begin{tabular}{l}\n"+
+"\\(\\quad\\) Math \\\\\n"+
+"Reasoning\n"+
+"\\end{tabular}} & \\begin{tabular}{l}  \n"+
+"In-domain \\\\\n"+
+"Out-of-domain \\\\\n"+
+"Out-of-domain\n"+
+"\\end{tabular} & \\(\\frac{\\text { MATH  }}{\\text { GSM-Hard  }}\\) & \\begin{tabular}{l} \n"+
+"College-level math \\\\\n"+
+"Large number arithmetics \\\\\n"+
+"Olympiad-level problems \\\\\n"+
+"Olympiad-level problems\n"+
+"\\end{tabular} & \\begin{tabular}{l}\n"+
+"5000 \\\\\n"+
+"500 \\\\\n"+
+"200\n"+
+"\\end{tabular} \\\\\n"+
+"\\hline & Out-of-domain & OlymMath  & Olympiad-level problems & \\\\\n"+
+"\\hline\n"+
+"\\end{tabular}\n"+
+"reduce evaluation cost, we limit each test set to 500 examples, following Wang et al. . As a metric, we use exact match for math and llm-as-a-judge  using gpt-40-mini for factual reasoning.\n"+
+"Models. The teacher model is Qwen2.5-32B-Instruct, a 32B parameter instruction-tuned model. For student models, we use the Qwen2.5-Instruct series with four sizes: \\(0.5 \\mathrm{~B}, 1.5 \\mathrm{~B}, 3 \\mathrm{~B}\\), and \\(7 \\mathrm{~B}\\) parameters. All student models are instruction-tuned prior to distillation .\n"+
+"Baselines. We compare two main distillation paradigms: (1) CoT distillation , which transfers static reasoning traces generated using Chain-of-Thought prompting, and (2) our proposed Agent Distillation, which transfers interactive reason-act-observe trajectories. For CoT distillation, we add the baseline that uses retrieval-augmented generation  in both distillation and inference for a fair comparison with external knowledge [19, 28, . For ours, we adopt the formulation from CodeAct [21, , where each step consists of a Thought, Action (e.g., Python code), and Observation. Additionally, we incorporate two proposed methods - distillation using trajectories through first-thought prefix \\(\\overline{\\mathrm{TF}}\\) and self-consistent action generation \\(\\overline{\\mathrm{SAg}}\\).\n"+
+"Training \\& inference details. For reproducibility of experiments, we use Wikipedia 2018 as a knowledge base for both agents and RAG instead of search engine. We use e5-base-v2  as both document and query embeddings as in Jin et al. . For both CoT and agent, we sample one trajectory per question from the teacher model and filter out wrong trajectories.\n"+
+"We fine-tune student models using parameter-efficient tuning with LoRA (rank 64) . All models are fine-tuned for 2 epochs using a batch size of 8 and a learning rate of \\(2 \\cdot 10^{-4}\\). All experiments are conducted using four NVIDIA A100 80GB GPUs.\n"+
+"For inference, we use a greedy decoding. For all agents, we set max steps to 5 . For \\(\\overline{\\mathrm{SAg}}\\) in main experiments, we set \\(N=8\\) with temperature to 0.4 . More details in Appendix C.\n"+
+"\\section*{6 Results}\n"+
+"Overall results. In Table 2, we find that agent distillation consistently improves performance across all model sizes. Before distillation, most sizes of models except 7B fail to produce effective agentic outputs via prompting alone, often generating incorrect or unparsable code action. In contrast, our distilled agents outperform CoT-distilled counterparts, particularly on out-of-domain tasks across both factual and mathematical domains. These results highlight the effectiveness of agent distillation in improving generalization of sLMs. Notably, the gains are further amplified by our two methods -First-thought Prefix \\(\\left(\\overline{\\mathrm{TF}}\\right)\\) and Self-consistent Action Generation \\(\\left(\\overline{\\mathrm{SAg}}\\right)\\).\n"+
+"Our findings also demonstrate that agent distillation enables small models to match or exceed the performance of CoT-distilled models that are \\(2-4 \\times\\) larger, offering a promising path toward the efficient and capable language agents. Specifically, the 0.5B agent matches the performance of a 1.5B CoT-distilled model, the 1.5B agent reaches its 3B counterpart, the 3B agent surpasses the 7B CoT model, and the 7B agent even outperforms the 32B CoT model.\n"+
+"Factual reasoning results. We find that retrieval improves the performance of CoT-distilled models on factual reasoning benchmarks. However, due to its static nature, it can degrade performance on tasks requiring dynamic or adaptive information use, such as mathematical reasoning. In contrast, our distilled agents outperform even RAG-enhanced CoT models. This is because agent distillation\n" 
+  </script>
+  <style>
+    #content {
+      max-width: 800px;
+      margin: auto;
+    }
+  </style>
+  <script>
+    let script = document.createElement('script');
+    script.src = "https://cdn.jsdelivr.net/npm/mathpix-markdown-it@1.3.6/es5/bundle.js";
+    document.head.append(script);
+    script.onload = function() {
+      const isLoaded = window.loadMathJax();
+      if (isLoaded) {
+        console.log('Styles loaded!')
+      }
+      const el = window.document.getElementById('content-text');
+      if (el) {
+        const options = {
+          htmlTags: true
+        };
+        const html = window.render(text, options);
+        el.outerHTML = html;
+      }
+    };
+  </script>
+</head>
+<body>
+  <div id="content"><div id="content-text"></div></div>
+</body>
+</html>
