@@ -13,7 +13,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 from dataclasses import dataclass
 from transformers.configuration_utils import PretrainedConfig
-@dataclass
+
 class Config(PretrainedConfig):
     
     keys_to_ignore_at_inference = ["past_key_values"]
@@ -260,7 +260,6 @@ class DecoderLayer(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
-        # output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
@@ -384,6 +383,7 @@ class BasePreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, RMSNorm):
             module.weight.data.fill_(1.0)
+            
 class BaseModel(BasePreTrainedModel):
     def __init__(self, config: Config):
         super().__init__(config)
